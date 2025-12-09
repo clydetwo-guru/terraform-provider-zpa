@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/applicationsegmentinspection"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/applicationsegmentinspection"
 )
 
 func dataSourceApplicationSegmentInspection() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceApplicationSegmentInspectionRead,
+		ReadContext: dataSourceApplicationSegmentInspectionRead,
 		Schema: map[string]*schema.Schema{
 			"id": {
 				Type:     schema.TypeString,
@@ -96,7 +98,7 @@ func dataSourceApplicationSegmentInspection() *schema.Resource {
 				Description: "Name of the application.",
 			},
 			"inspection_apps": {
-				Type:     schema.TypeList,
+				Type:     schema.TypeSet,
 				Computed: true,
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
@@ -104,8 +106,16 @@ func dataSourceApplicationSegmentInspection() *schema.Resource {
 							Type:     schema.TypeString,
 							Computed: true,
 						},
-						"app_id": {
+						"name": {
 							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"description": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"enabled": {
+							Type:     schema.TypeBool,
 							Computed: true,
 						},
 						"application_port": {
@@ -124,20 +134,16 @@ func dataSourceApplicationSegmentInspection() *schema.Resource {
 							Type:     schema.TypeString,
 							Computed: true,
 						},
-						"description": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
 						"domain": {
 							Type:     schema.TypeString,
 							Computed: true,
 						},
-						"enabled": {
-							Type:     schema.TypeBool,
+						"app_id": {
+							Type:     schema.TypeString,
 							Computed: true,
 						},
-						"name": {
-							Type:     schema.TypeString,
+						"trusted_untrusted_cert": {
+							Type:     schema.TypeBool,
 							Computed: true,
 						},
 					},
@@ -178,24 +184,31 @@ func dataSourceApplicationSegmentInspection() *schema.Resource {
 	}
 }
 
-func dataSourceApplicationSegmentInspectionRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceApplicationSegmentInspectionRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
 	var resp *applicationsegmentinspection.AppSegmentInspection
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for inspection application segment %s\n", id)
-		res, _, err := zClient.applicationsegmentinspection.Get(id)
+		res, _, err := applicationsegmentinspection.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if id == "" && ok && name != "" {
 		log.Printf("[INFO] Getting data for inspection application segment name %s\n", name)
-		res, _, err := zClient.applicationsegmentinspection.GetByName(name)
+		res, _, err := applicationsegmentinspection.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -219,60 +232,56 @@ func dataSourceApplicationSegmentInspectionRead(d *schema.ResourceData, m interf
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("ip_anchored", resp.IPAnchored)
 		_ = d.Set("health_reporting", resp.HealthReporting)
-		_ = d.Set("tcp_port_ranges", resp.TCPPortRanges)
-		_ = d.Set("udp_port_ranges", resp.UDPPortRanges)
 
-		if err := d.Set("inspection_apps", flattenInspectionApps(resp)); err != nil {
-			return fmt.Errorf("failed to read inspection apps %s", err)
+		if err := d.Set("inspection_apps", flattenInspectionApps(resp.InspectionAppDto)); err != nil {
+			return diag.FromErr(fmt.Errorf("failed to read inspection apps in application segment %s", err))
 		}
 
-		if err := d.Set("server_groups", flattenInspectionAppServerGroups(resp.AppServerGroups)); err != nil {
-			return fmt.Errorf("failed to read server groups for inspection app %s", err)
+		if err := d.Set("server_groups", flattenCommonAppServerGroups(resp.AppServerGroups)); err != nil {
+			return diag.FromErr(fmt.Errorf("failed to read server groups for inspection app %s", err))
+		}
+
+		if err := d.Set("tcp_port_ranges", resp.TCPPortRanges); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("udp_port_ranges", resp.UDPPortRanges); err != nil {
+			return diag.FromErr(err)
 		}
 
 		if err := d.Set("tcp_port_range", flattenNetworkPorts(resp.TCPAppPortRange)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
-		if err := d.Set("tcp_port_range", flattenNetworkPorts(resp.UDPAppPortRange)); err != nil {
-			return err
+		if err := d.Set("udp_port_range", flattenNetworkPorts(resp.UDPAppPortRange)); err != nil {
+			return diag.FromErr(err)
 		}
 	} else {
-		return fmt.Errorf("couldn't find any inspection application segment with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any inspection application segment with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
-
 }
 
-func flattenInspectionAppServerGroups(appServerGroup []applicationsegmentinspection.AppServerGroups) []interface{} {
-	result := make([]interface{}, 1)
-	mapIds := make(map[string]interface{})
-	ids := make([]string, len(appServerGroup))
-	for i, serverGroup := range appServerGroup {
-		ids[i] = serverGroup.ID
+func flattenInspectionApps(apps []applicationsegmentinspection.InspectionAppDto) []interface{} {
+	if len(apps) == 0 {
+		return []interface{}{}
 	}
-	mapIds["id"] = ids
-	result[0] = mapIds
-	return result
-}
 
-func flattenInspectionApps(inspectionApp *applicationsegmentinspection.AppSegmentInspection) []interface{} {
-	inspectionApps := make([]interface{}, len(inspectionApp.InspectionAppDto))
-	for i, val := range inspectionApp.InspectionAppDto {
-		inspectionApps[i] = map[string]interface{}{
-			"id":                   val.ID,
-			"app_id":               val.AppID,
-			"application_port":     val.ApplicationPort,
-			"application_protocol": val.ApplicationProtocol,
-			"certificate_id":       val.CertificateID,
-			"certificate_name":     val.CertificateName,
-			"description":          val.Description,
-			"domain":               val.Domain,
-			"enabled":              val.Enabled,
-			"name":                 val.Name,
+	appsConfig := make([]interface{}, len(apps))
+	for i, app := range apps {
+		appConfigMap := map[string]interface{}{
+			"id":                     app.ID,
+			"name":                   app.Name,
+			"enabled":                app.Enabled,
+			"application_port":       app.ApplicationPort,
+			"application_protocol":   app.ApplicationProtocol,
+			"certificate_id":         app.CertificateID,
+			"certificate_name":       app.CertificateName,
+			"domain":                 app.Domain,
+			"app_id":                 app.AppID,
+			"trusted_untrusted_cert": app.TrustUntrustedCert,
 		}
+		appsConfig[i] = appConfigMap
 	}
-
-	return inspectionApps
+	return appsConfig
 }

@@ -1,12 +1,16 @@
 ---
+page_title: "zpa_provisioning_key Resource - terraform-provider-zpa"
 subcategory: "Provisioning Key"
-layout: "zscaler"
-page_title: "ZPA: provisioning_key"
 description: |-
+  Official documentation https://help.zscaler.com/zpa/about-connector-provisioning-keys
+  API documentation https://help.zscaler.com/zpa/configuring-provisioning-keys-using-api
   Get information about Provisioning Key in Zscaler Private Access cloud.
 ---
 
 # Data Source: zpa_provisioning_key
+
+* [Official documentation](https://help.zscaler.com/zpa/about-connector-provisioning-keys)
+* [API documentation](https://help.zscaler.com/zpa/configuring-provisioning-keys-using-api)
 
 Use the **zpa_provisioning_key** data source to get information about a provisioning key in the Zscaler Private Access portal or via API. This data source can be referenced in the following ZPA resources:
 
@@ -15,9 +19,15 @@ Use the **zpa_provisioning_key** data source to get information about a provisio
 
 -> **NOTE** The ``association_type`` parameter is required in order to distinguish between ``CONNECTOR_GRP`` and ``SERVICE_EDGE_GRP``
 
+**NOTE:** To ensure consistent search results across data sources, please avoid using multiple spaces or special characters in your search queries.
+
+## Zenith Community - ZPA Provisioning Keys
+
+[![ZPA Terraform provider Video Series Ep3 - Provisioning Keys](https://raw.githubusercontent.com/zscaler/terraform-provider-zpa/master/images/zpa_provisioning_key.svg)](https://community.zscaler.com/zenith/s/question/0D54u00009evlEnCAI/video-zpa-terraform-provider-video-series-ep3-provisioning-keys)
+
 ## Example Usage
 
-```hcl
+```terraform
 # ZPA Provisioning Key for "CONNECTOR_GRP"
 data "zpa_provisioning_key" "example" {
  name = "Provisioning_Key"
@@ -25,7 +35,7 @@ data "zpa_provisioning_key" "example" {
 }
 ```
 
-```hcl
+```terraform
 # ZPA Provisioning Key for "SERVICE_EDGE_GRP"
 data "zpa_provisioning_key" "example" {
  name = "Provisioning_Key"
@@ -33,15 +43,17 @@ data "zpa_provisioning_key" "example" {
 }
 ```
 
-## Argument Reference
+## Schema
+
+### Required
 
 The following arguments are supported:
 
 * `name` - (Required) Name of the provisioning key.
 * `association_type` (Required) Specifies the provisioning key type for App Connectors or ZPA Private Service Edges. The supported values are `CONNECTOR_GRP` and `SERVICE_EDGE_GRP`
-* `id` - (Optional) The ID of the posture profile to be exported.
+* `id` - (Optional) The ID of the provisioning key to be exported.
 
-## Attribute Reference
+### Read-Only
 
 In addition to all arguments above, the following attributes are exported:
 
@@ -59,5 +71,7 @@ In addition to all arguments above, the following attributes are exported:
 * `usage_count` - (string)
 * `zcomponent_id` - (string)
 * `zcomponent_name` - (string) Applicable only for GET calls, ignored in PUT/POST calls.
+* `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+* `microtenant_name` (string) The name of the microtenant the resource is to be associated with.
 
 :warning: Notice that certificate and public_keys are omitted from the output.

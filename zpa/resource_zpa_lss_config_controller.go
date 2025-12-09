@@ -1,13 +1,15 @@
 package zpa
 
 import (
+	"context"
 	"log"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/client"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/lssconfigcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/errorx"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/lssconfigcontroller"
 )
 
 func getPolicyRuleResourceSchema() map[string]*schema.Schema {
@@ -18,8 +20,7 @@ func getPolicyRuleResourceSchema() map[string]*schema.Schema {
 				Optional:    true,
 				Description: "  This is for providing the rule action.",
 				ValidateFunc: validation.StringInSlice([]string{
-					"ALLOW",
-					"DENY",
+					"LOG",
 				}, false),
 			},
 			"policy_set_id": {
@@ -32,10 +33,6 @@ func getPolicyRuleResourceSchema() map[string]*schema.Schema {
 				Description: "This is for proviidng the set of conditions for the policy.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
-						"negated": {
-							Type:     schema.TypeBool,
-							Optional: true,
-						},
 						"operator": {
 							Type:     schema.TypeString,
 							Required: true,
@@ -66,7 +63,27 @@ func getPolicyRuleResourceSchema() map[string]*schema.Schema {
 											"APP",
 											"APP_GROUP",
 											"CLIENT_TYPE",
+											"IDP",
+											"SCIM",
+											"SCIM_GROUP",
+											"SAML",
 										}, false),
+									},
+									"entry_values": {
+										Type:     schema.TypeList,
+										Optional: true,
+										Elem: &schema.Resource{
+											Schema: map[string]*schema.Schema{
+												"rhs": {
+													Type:     schema.TypeString,
+													Optional: true,
+												},
+												"lhs": {
+													Type:     schema.TypeString,
+													Optional: true,
+												},
+											},
+										},
 									},
 								},
 							},
@@ -80,13 +97,14 @@ func getPolicyRuleResourceSchema() map[string]*schema.Schema {
 
 func resourceLSSConfigController() *schema.Resource {
 	return &schema.Resource{
-		Create: resourceLSSConfigControllerCreate,
-		Read:   resourceLSSConfigControllerRead,
-		Update: resourceLSSConfigControllerUpdate,
-		Delete: resourceLSSConfigControllerDelete,
+		CreateContext: resourceLSSConfigControllerCreate,
+		ReadContext:   resourceLSSConfigControllerRead,
+		UpdateContext: resourceLSSConfigControllerUpdate,
+		DeleteContext: resourceLSSConfigControllerDelete,
 		Importer: &schema.ResourceImporter{
-			State: func(d *schema.ResourceData, m interface{}) ([]*schema.ResourceData, error) {
-				zClient := m.(*Client)
+			StateContext: func(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+				zClient := meta.(*Client)
+				service := zClient.Service
 
 				id := d.Id()
 				_, parseIDErr := strconv.ParseInt(id, 10, 64)
@@ -94,7 +112,7 @@ func resourceLSSConfigController() *schema.Resource {
 					// assume if the passed value is an int
 					_ = d.Set("id", id)
 				} else {
-					resp, _, err := zClient.lssconfigcontroller.GetByName(id)
+					resp, _, err := lssconfigcontroller.GetByName(ctx, service, id)
 					if err == nil {
 						d.SetId(resp.ID)
 						_ = d.Set("id", resp.ID)
@@ -165,6 +183,7 @@ func resourceLSSConfigController() *schema.Resource {
 							Optional:    true,
 							Description: "Filter for the LSS configuration. Format given by the following API to get status codes: /mgmtconfig/v2/admin/lssConfig/statusCodes",
 						},
+
 						"format": {
 							Type:        schema.TypeString,
 							Required:    true,
@@ -200,9 +219,10 @@ func resourceLSSConfigController() *schema.Resource {
 								"zpn_ast_auth_log",
 								"zpn_http_trans_log",
 								"zpn_audit_log",
-								"zpn_sys_auth_log",
-								"zpn_http_insp",
 								"zpn_ast_comprehensive_stats",
+								"zpn_sys_auth_log",
+								"zpn_waf_http_exchanges_log",
+								"zpn_pbroker_comprehensive_stats",
 							}, false),
 						},
 						"use_tls": {
@@ -217,34 +237,97 @@ func resourceLSSConfigController() *schema.Resource {
 	}
 }
 
-func resourceLSSConfigControllerCreate(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func resourceLSSConfigControllerCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
 	req := expandLSSResource(d)
 	log.Printf("[INFO] Creating zpa lss config controller with request\n%+v\n", req)
 
-	resp, _, err := zClient.lssconfigcontroller.Create(&req)
-	if err != nil {
-		return err
+	sourceLogType := d.Get("config.0.source_log_type").(string)
+
+	conditions := d.Get("policy_rule_resource.0.conditions").([]interface{})
+	for _, condition := range conditions {
+		conditionMap := condition.(map[string]interface{})
+		operandsInterface := conditionMap["operands"].([]interface{})
+
+		var operands []lssconfigcontroller.PolicyRuleResourceOperands
+		for _, operandInterface := range operandsInterface {
+			operandMap := operandInterface.(map[string]interface{})
+			objectType := operandMap["object_type"].(string)
+			valuesInterface := operandMap["values"].(*schema.Set).List()
+
+			var values []string
+			for _, valueInterface := range valuesInterface {
+				values = append(values, valueInterface.(string))
+			}
+
+			entryValuesInterface, exists := operandMap["entry_values"]
+			var entryValues []lssconfigcontroller.OperandsResourceLHSRHSValue
+			if exists && entryValuesInterface != nil {
+				for _, entryValueInterface := range entryValuesInterface.([]interface{}) {
+					entryValueMap := entryValueInterface.(map[string]interface{})
+					entryValue := lssconfigcontroller.OperandsResourceLHSRHSValue{
+						LHS: entryValueMap["lhs"].(string),
+						RHS: entryValueMap["rhs"].(string),
+					}
+					entryValues = append(entryValues, entryValue)
+				}
+			}
+
+			operand := lssconfigcontroller.PolicyRuleResourceOperands{
+				ObjectType:                  objectType,
+				Values:                      values,
+				OperandsResourceLHSRHSValue: &entryValues,
+			}
+			operands = append(operands, operand)
+		}
+
+		// Validate operand object types and values here
+		for _, operand := range operands {
+			err := validateLSSConfigControllerFilters(sourceLogType, operand.ObjectType, "", operand.Values, operands)
+			if err != nil {
+				return diag.FromErr(err) // handle the error as appropriate
+			}
+		}
 	}
+
+	// Validate filters within the config block separately
+	if filterSet, exists := d.GetOk("config.0.filter"); exists {
+		for _, filter := range filterSet.(*schema.Set).List() {
+			filterStr := filter.(string)
+			// For filter validation, passing empty string as the objectType and nil for values and operands
+			err := validateLSSConfigControllerFilters(sourceLogType, "", filterStr, nil, nil)
+			if err != nil {
+				return diag.FromErr(err)
+			}
+		}
+	}
+
+	resp, _, err := lssconfigcontroller.Create(ctx, service, &req)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
 	log.Printf("[INFO] Created lss config controller request. ID: %v\n", resp)
 	d.SetId(resp.ID)
 
-	return resourceLSSConfigControllerRead(d, m)
+	return resourceLSSConfigControllerRead(ctx, d, meta)
 }
 
-func resourceLSSConfigControllerRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func resourceLSSConfigControllerRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
-	resp, _, err := zClient.lssconfigcontroller.Get(d.Id())
+	resp, _, err := lssconfigcontroller.Get(ctx, service, d.Id())
 	if err != nil {
-		if err.(*client.ErrorResponse).IsObjectNotFound() {
+		if err.(*errorx.ErrorResponse).IsObjectNotFound() {
 			log.Printf("[WARN] Removing lss config controller %s from state because it no longer exists in ZPA", d.Id())
 			d.SetId("")
 			return nil
 		}
 
-		return err
+		return diag.FromErr(err)
 	}
 
 	log.Printf("[INFO] Getting lss config controller:\n%+v\n", resp)
@@ -255,30 +338,99 @@ func resourceLSSConfigControllerRead(d *schema.ResourceData, m interface{}) erro
 	_ = d.Set("config", flattenLSSConfig(resp.LSSConfig))
 	_ = d.Set("connector_groups", flattenConnectorGroupsSimple(resp.ConnectorGroups))
 	return nil
-
 }
 
-func resourceLSSConfigControllerUpdate(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func resourceLSSConfigControllerUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
 	id := d.Id()
-	log.Printf("[INFO] Updating lss config controller ID: %v\n", id)
 	req := expandLSSResource(d)
+	log.Printf("[INFO] Updating zpa lss config controller with request\n%+v\n", req)
 
-	if _, err := zClient.lssconfigcontroller.Update(id, &req); err != nil {
-		return err
+	sourceLogType := d.Get("config.0.source_log_type").(string)
+
+	conditions := d.Get("policy_rule_resource.0.conditions").([]interface{})
+	for _, condition := range conditions {
+		conditionMap := condition.(map[string]interface{})
+		operandsInterface := conditionMap["operands"].([]interface{})
+
+		var operands []lssconfigcontroller.PolicyRuleResourceOperands
+		for _, operandInterface := range operandsInterface {
+			operandMap := operandInterface.(map[string]interface{})
+			objectType := operandMap["object_type"].(string)
+			valuesInterface := operandMap["values"].(*schema.Set).List()
+
+			var values []string
+			for _, valueInterface := range valuesInterface {
+				values = append(values, valueInterface.(string))
+			}
+
+			entryValuesInterface, exists := operandMap["entry_values"]
+			var entryValues []lssconfigcontroller.OperandsResourceLHSRHSValue
+			if exists && entryValuesInterface != nil {
+				for _, entryValueInterface := range entryValuesInterface.([]interface{}) {
+					entryValueMap := entryValueInterface.(map[string]interface{})
+					entryValue := lssconfigcontroller.OperandsResourceLHSRHSValue{
+						LHS: entryValueMap["lhs"].(string),
+						RHS: entryValueMap["rhs"].(string),
+					}
+					entryValues = append(entryValues, entryValue)
+				}
+			}
+
+			operand := lssconfigcontroller.PolicyRuleResourceOperands{
+				ObjectType:                  objectType,
+				Values:                      values,
+				OperandsResourceLHSRHSValue: &entryValues,
+			}
+			operands = append(operands, operand)
+		}
+
+		// Validate operand object types and values here
+		for _, operand := range operands {
+			err := validateLSSConfigControllerFilters(sourceLogType, operand.ObjectType, "", operand.Values, operands)
+			if err != nil {
+				return diag.FromErr(err) // handle the error as appropriate
+			}
+		}
 	}
 
-	return resourceLSSConfigControllerRead(d, m)
+	// Validate filters within the config block separately
+	if filterSet, exists := d.GetOk("config.0.filter"); exists {
+		for _, filter := range filterSet.(*schema.Set).List() {
+			filterStr := filter.(string)
+			// Pass empty string as objectType and nil for values and operands when validating filters
+			err := validateLSSConfigControllerFilters(sourceLogType, "", filterStr, nil, nil)
+			if err != nil {
+				return diag.FromErr(err)
+			}
+		}
+	}
+
+	if _, _, err := lssconfigcontroller.Get(ctx, service, id); err != nil {
+		if respErr, ok := err.(*errorx.ErrorResponse); ok && respErr.IsObjectNotFound() {
+			d.SetId("")
+			return nil
+		}
+		return diag.FromErr(err)
+	}
+
+	if _, err := lssconfigcontroller.Update(ctx, service, id, &req); err != nil {
+		return diag.FromErr(err)
+	}
+
+	return resourceLSSConfigControllerRead(ctx, d, meta)
 }
 
-func resourceLSSConfigControllerDelete(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func resourceLSSConfigControllerDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
 	log.Printf("[INFO] Deleting lss config controller ID: %v\n", d.Id())
 
-	if _, err := zClient.lssconfigcontroller.Delete(d.Id()); err != nil {
-		return err
+	if _, err := lssconfigcontroller.Delete(ctx, service, d.Id()); err != nil {
+		return diag.FromErr(err)
 	}
 	d.SetId("")
 	log.Printf("[INFO] lss config controller deleted")
@@ -298,6 +450,7 @@ func expandLSSResource(d *schema.ResourceData) lssconfigcontroller.LSSResource {
 	}
 	return req
 }
+
 func expandPolicyRuleResource(d *schema.ResourceData) (*lssconfigcontroller.PolicyRuleResource, error) {
 	policyObj, ok := d.GetOk("policy_rule_resource")
 	if !ok {
@@ -317,18 +470,15 @@ func expandPolicyRuleResource(d *schema.ResourceData) (*lssconfigcontroller.Poli
 		Action:            polictSet["action"].(string),
 		ActionID:          polictSet["action_id"].(string),
 		CustomMsg:         polictSet["custom_msg"].(string),
-		DefaultRule:       polictSet["default_rule"].(bool),
 		Description:       polictSet["description"].(string),
 		ID:                polictSet["id"].(string),
 		Name:              polictSet["name"].(string),
 		Operator:          polictSet["operator"].(string),
 		PolicyType:        polictSet["policy_type"].(string),
 		Priority:          polictSet["priority"].(string),
-		ReauthDefaultRule: polictSet["reauth_default_rule"].(bool),
 		ReauthIdleTimeout: polictSet["reauth_idle_timeout"].(string),
 		ReauthTimeout:     polictSet["reauth_timeout"].(string),
 		RuleOrder:         polictSet["rule_order"].(string),
-		LssDefaultRule:    polictSet["lss_default_rule"].(bool),
 		Conditions:        conditions,
 	}, nil
 }
@@ -347,7 +497,6 @@ func ExpandPolicyRuleResourceConditions(d map[string]interface{}) ([]lssconfigco
 					return nil, err
 				}
 				conditionSets = append(conditionSets, lssconfigcontroller.PolicyRuleResourceConditions{
-					Negated:  conditionSet["negated"].(bool),
 					Operator: conditionSet["operator"].(string),
 					Operands: &operands,
 				})
@@ -367,10 +516,30 @@ func expandPolicyRuleResourceOperandsList(ops interface{}) ([]lssconfigcontrolle
 		for _, operand := range operands {
 			operandSet, _ := operand.(map[string]interface{})
 			valuesSet := operandSet["values"].(*schema.Set)
+
+			// Expanding entryValues from schema
+			entryValuesInterface, exists := operandSet["entry_values"]
+			var entryValues []lssconfigcontroller.OperandsResourceLHSRHSValue
+			if exists && entryValuesInterface != nil {
+				for _, entryValueInterface := range entryValuesInterface.([]interface{}) {
+					entryValueMap := entryValueInterface.(map[string]interface{})
+					entryValue := lssconfigcontroller.OperandsResourceLHSRHSValue{
+						LHS: entryValueMap["lhs"].(string),
+						RHS: entryValueMap["rhs"].(string),
+					}
+					entryValues = append(entryValues, entryValue)
+				}
+			}
+
 			op := lssconfigcontroller.PolicyRuleResourceOperands{
 				Values:     SetToStringSlice(valuesSet),
 				ObjectType: operandSet["object_type"].(string),
 			}
+
+			if len(entryValues) > 0 {
+				op.OperandsResourceLHSRHSValue = &entryValues // Setting expanded entryValues only if it is not empty
+			}
+
 			operandsSets = append(operandsSets, op)
 		}
 		return operandsSets, nil

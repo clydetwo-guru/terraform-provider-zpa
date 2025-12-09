@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/cloudconnectorgroup"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/cloud_connector_group"
 )
 
 func dataSourceCloudConnectorGroup() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceCloudConnectorGroupRead,
+		ReadContext: dataSourceCloudConnectorGroupRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeString,
@@ -110,25 +112,26 @@ func dataSourceCloudConnectorGroup() *schema.Resource {
 	}
 }
 
-func dataSourceCloudConnectorGroupRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceCloudConnectorGroupRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
-	var resp *cloudconnectorgroup.CloudConnectorGroup
+	var resp *cloud_connector_group.CloudConnectorGroup
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for cloud connector group  %s\n", id)
-		res, _, err := zClient.cloudconnectorgroup.Get(id)
+		res, _, err := cloud_connector_group.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for cloud connector group name %s\n", name)
-		res, _, err := zClient.cloudconnectorgroup.GetByName(name)
+		res, _, err := cloud_connector_group.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -147,13 +150,13 @@ func dataSourceCloudConnectorGroupRead(d *schema.ResourceData, m interface{}) er
 		_ = d.Set("cloud_connectors", flattenCloudConnectors(resp))
 
 	} else {
-		return fmt.Errorf("couldn't find any cloud connector group with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any cloud connector group with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
 }
 
-func flattenCloudConnectors(cloudConnectors *cloudconnectorgroup.CloudConnectorGroup) []interface{} {
+func flattenCloudConnectors(cloudConnectors *cloud_connector_group.CloudConnectorGroup) []interface{} {
 	connectorItems := make([]interface{}, len(cloudConnectors.CloudConnectors))
 	for i, connectorItem := range cloudConnectors.CloudConnectors {
 		connectorItems[i] = map[string]interface{}{

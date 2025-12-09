@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/inspectioncontrol/inspection_profile"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/inspectioncontrol/inspection_profile"
 )
 
 func dataSourceInspectionProfile() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceInspectionProfileRead,
+		ReadContext: dataSourceInspectionProfileRead,
 		Schema: map[string]*schema.Schema{
 			"id": {
 				Type:     schema.TypeString,
@@ -204,6 +206,10 @@ func dataSourceInspectionProfile() *schema.Resource {
 							Type:     schema.TypeString,
 							Computed: true,
 						},
+						"control_type": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
 						"creation_time": {
 							Type:     schema.TypeString,
 							Computed: true,
@@ -255,35 +261,131 @@ func dataSourceInspectionProfile() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"web_socket_controls": {
+				Type:     schema.TypeList,
+				Computed: true,
+				Elem: &schema.Resource{
+					Schema: map[string]*schema.Schema{
+						"action": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"action_value": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"associated_inspection_profile_names": {
+							Type:     schema.TypeList,
+							Computed: true,
+							Elem: &schema.Resource{
+								Schema: map[string]*schema.Schema{
+									"id": {
+										Type:     schema.TypeString,
+										Computed: true,
+									},
+									"name": {
+										Type:     schema.TypeString,
+										Computed: true,
+									},
+								},
+							},
+						},
+						"attachment": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"control_group": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"control_number": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"control_type": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"creation_time": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"default_action": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"default_action_value": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"description": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"id": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"modified_by": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"modified_time": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"name": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"paranoia_level": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"protocol_type": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"severity": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+						"version": {
+							Type:     schema.TypeString,
+							Computed: true,
+						},
+					},
+				},
+			},
 		},
 	}
 }
 
-func dataSourceInspectionProfileRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceInspectionProfileRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
 	var resp *inspection_profile.InspectionProfile
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for inspection profile  %s\n", id)
-		res, _, err := zClient.inspection_profile.Get(id)
+		res, _, err := inspection_profile.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err) // Wrap error using diag.FromErr
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for inspection profile name %s\n", name)
-		res, _, err := zClient.inspection_profile.GetByName(name)
+		res, _, err := inspection_profile.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err) // Wrap error using diag.FromErr
 		}
 		resp = res
 	}
 	if resp != nil {
 		d.SetId(resp.ID)
-		_ = d.Set("common_global_override_actions_config", resp.CommonGlobalOverrideActionsConfig)
 		_ = d.Set("creation_time", resp.CreationTime)
 		_ = d.Set("description", resp.Description)
 		_ = d.Set("global_control_actions", resp.GlobalControlActions)
@@ -295,18 +397,36 @@ func dataSourceInspectionProfileRead(d *schema.ResourceData, m interface{}) erro
 		_ = d.Set("predefined_controls_version", resp.PredefinedControlsVersion)
 
 		if err := d.Set("controls_info", flattenControlInfoResource(resp.ControlInfoResource)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
 		if err := d.Set("custom_controls", flattenCustomControls(resp.CustomControls)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
 		if err := d.Set("predefined_controls", flattenPredefinedControls(resp.PredefinedControls)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
+
+		// Flattening ThreatLabz Controls
+		// threatLabzIDs := make([]string, len(resp.ThreatLabzControls))
+		// for i, control := range resp.ThreatLabzControls {
+		// 	threatLabzIDs[i] = control.ID
+		// }
+		// if err := d.Set("threatlabz_controls", flattenIDList(threatLabzIDs)); err != nil {
+		// 	return err
+		// }
+
+		// // Flattening WebSocket Controls
+		// websocketIDs := make([]string, len(resp.WebSocketControls))
+		// for i, control := range resp.WebSocketControls {
+		// 	websocketIDs[i] = control.ID
+		// }
+		// if err := d.Set("websocket_controls", flattenIDList(websocketIDs)); err != nil {
+		// 	return err
+		// }
 	} else {
-		return fmt.Errorf("couldn't find any inspection profile with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any inspection profile with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
@@ -349,43 +469,4 @@ func flattenCustomControls(customControl []inspection_profile.InspectionCustomCo
 	}
 
 	return customControls
-}
-
-func flattenAssociatedInspectionProfileNames(associatedInspectionProfileNames []inspection_profile.AssociatedProfileNames) []interface{} {
-	rule := make([]interface{}, len(associatedInspectionProfileNames))
-	for i, val := range associatedInspectionProfileNames {
-		rule[i] = map[string]interface{}{
-			"id":   val.ID,
-			"name": val.Name,
-		}
-	}
-
-	return rule
-}
-
-func flattenPredefinedControls(predControl []inspection_profile.PredefinedControls) []interface{} {
-	predControls := make([]interface{}, len(predControl))
-	for i, predControl := range predControl {
-		predControls[i] = map[string]interface{}{
-			"id":                                  predControl.ID,
-			"action":                              predControl.Action,
-			"action_value":                        predControl.ActionValue,
-			"attachment":                          predControl.Attachment,
-			"control_group":                       predControl.ControlGroup,
-			"control_number":                      predControl.ControlNumber,
-			"creation_time":                       predControl.CreationTime,
-			"default_action":                      predControl.DefaultAction,
-			"default_action_value":                predControl.DefaultActionValue,
-			"description":                         predControl.Description,
-			"modified_by":                         predControl.ModifiedBy,
-			"modified_time":                       predControl.ModifiedTime,
-			"name":                                predControl.Name,
-			"paranoia_level":                      predControl.ParanoiaLevel,
-			"severity":                            predControl.Severity,
-			"version":                             predControl.Version,
-			"associated_inspection_profile_names": flattenAssociatedInspectionProfileNames(predControl.AssociatedInspectionProfileNames),
-		}
-	}
-
-	return predControls
 }

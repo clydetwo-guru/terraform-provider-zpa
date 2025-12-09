@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
 )
 
 func TestAccDataSourceServiceEdgeGroup_Basic(t *testing.T) {
@@ -25,6 +25,14 @@ func TestAccDataSourceServiceEdgeGroup_Basic(t *testing.T) {
 					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "name", resourceTypeAndName, "name"),
 					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "description", resourceTypeAndName, "description"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.ServiceEdgeEnabled)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "is_public", strconv.FormatBool(variable.ServiceEdgeIsPublic)),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "latitude", resourceTypeAndName, "latitude"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "longitude", resourceTypeAndName, "longitude"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "location", resourceTypeAndName, "location"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "version_profile_name", resourceTypeAndName, "version_profile_name"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "grace_distance_enabled", resourceTypeAndName, "grace_distance_enabled"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "grace_distance_value", resourceTypeAndName, "grace_distance_value"),
+					resource.TestCheckResourceAttrPair(dataSourceTypeAndName, "grace_distance_value_unit", resourceTypeAndName, "grace_distance_value_unit"),
 				),
 			},
 		},

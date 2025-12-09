@@ -1,21 +1,26 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/appservercontroller"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/appservercontroller"
 )
 
-func TestAccResourceApplicationServerBasic(t *testing.T) {
+func TestAccResourceApplicationServer_Basic(t *testing.T) {
 	var servers appservercontroller.ApplicationServer
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAApplicationServer)
+
+	initialName := "tf-acc-test-" + generatedName
+	updatedName := "tf-updated-" + generatedName
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -23,10 +28,10 @@ func TestAccResourceApplicationServerBasic(t *testing.T) {
 		CheckDestroy: testAccCheckApplicationServerDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCheckApplicationServerConfigure(resourceTypeAndName, generatedName, variable.AppServerDescription, variable.AppServerAddress, variable.AppServerEnabled),
+				Config: testAccCheckApplicationServerConfigure(resourceTypeAndName, initialName, variable.AppServerDescription, variable.AppServerAddress, variable.AppServerEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckApplicationServerExists(resourceTypeAndName, &servers),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", initialName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.AppServerDescription),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "address", variable.AppServerAddress),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.AppServerEnabled)),
@@ -35,14 +40,20 @@ func TestAccResourceApplicationServerBasic(t *testing.T) {
 
 			// Update test
 			{
-				Config: testAccCheckApplicationServerConfigure(resourceTypeAndName, generatedName, variable.AppServerDescription, variable.AppServerAddress, variable.AppServerEnabled),
+				Config: testAccCheckApplicationServerConfigure(resourceTypeAndName, updatedName, variable.AppServerDescription, variable.AppServerAddress, variable.AppServerEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckApplicationServerExists(resourceTypeAndName, &servers),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.AppServerDescription),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "address", variable.AppServerAddress),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.AppServerEnabled)),
 				),
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -56,13 +67,19 @@ func testAccCheckApplicationServerDestroy(s *terraform.State) error {
 			continue
 		}
 
-		rule, _, err := apiClient.appservercontroller.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		server, _, err := appservercontroller.Get(context.Background(), service, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
 		}
 
-		if rule != nil {
+		if server != nil {
 			return fmt.Errorf("application server with id %s exists and wasn't destroyed", rs.Primary.ID)
 		}
 	}
@@ -81,8 +98,13 @@ func testAccCheckApplicationServerExists(resource string, server *appservercontr
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		receivedServer, _, err := apiClient.appservercontroller.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
 
+		receivedServer, _, err := appservercontroller.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -93,8 +115,9 @@ func testAccCheckApplicationServerExists(resource string, server *appservercontr
 }
 
 func testAccCheckApplicationServerConfigure(resourceTypeAndName, generatedName, description, address string, enabled bool) string {
+	resourceName := strings.Split(resourceTypeAndName, ".")[1] // Extract the resource name
 	return fmt.Sprintf(`
-resource "%s" "%s" {
+	resource "%s" "%s" {
 	name            = "%s"
 	description     = "%s"
 	address         = "%s"
@@ -102,20 +125,21 @@ resource "%s" "%s" {
 }
 
 data "%s" "%s" {
-	id = "${%s.id}"
-}
+	id = "${%s.%s.id}"
+  }
 `,
 		// resource variables
 		resourcetype.ZPAApplicationServer,
-		generatedName,
+		resourceName,
 		generatedName,
 		description,
 		address,
 		strconv.FormatBool(enabled),
 
-		// data source variables
-		resourcetype.ZPAApplicationServer,
-		generatedName,
-		resourceTypeAndName,
+		// Data source type and name
+		resourcetype.ZPAApplicationServer, resourceName,
+
+		// Reference to the resource
+		resourcetype.ZPAApplicationServer, resourceName,
 	)
 }

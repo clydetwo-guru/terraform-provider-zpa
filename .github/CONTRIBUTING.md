@@ -373,7 +373,7 @@ TF_ACC=1 go test ./zpa -v -run=TestAccResourceAppConnectorGroupBasic -timeout 12
 === RUN   TestAccResourceAppConnectorGroupBasic
 --- PASS: TestAccResourceAppConnectorGroupBasic (26.56s)
 PASS
-ok  	github.com/zscaler/terraform-provider-zpa/zpa	26.607s
+ok  	github.com/zscaler/terraform-provider-zpa/v4/zpa	26.607s
 ```
 
 #### Writing an Acceptance Test
@@ -440,7 +440,7 @@ When executing the test, the following steps are taken for each `TestStep`:
    responsible for configuring the resource under test, and any dependencies it
    may have. For example, to test the `zpa_app_connector_group` resource, a valid configuration with the requisite fields is required. This results in configuration which looks like this:
 
-   ```hcl
+   ```terraform
    resource "zpa_app_connector_group" "test" {
        name        = "testAcc_app_connector_group"
        description = "testing"
@@ -489,6 +489,6 @@ When executing the test, the following steps are taken for each `TestStep`:
    CheckDestroy: testAccCheckAppConnectorGroupDestroy,
    ```
 
-[website]: https://github.com/zscaler/terraform-provider-zpa/tree/master/website
+[website]: https://github.com/zscaler/terraform-provider-zpa/blob/master/.github/CONTRIBUTING.md
 [acctests]: https://github.com/hashicorp/terraform#acceptance-tests
 [ml]: https://groups.google.com/group/terraform-tool

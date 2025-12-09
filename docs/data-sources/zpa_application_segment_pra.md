@@ -1,48 +1,56 @@
 ---
+page_title: "zpa_application_segment_pra Data Source - terraform-provider-zpa"
 subcategory: "Application Segment"
-layout: "zscaler"
-page_title: "ZPA: application_segment"
 description: |-
+  Official documentation https://help.zscaler.com/zpa/about-privileged-remote-access-applications
+  API documentation https://help.zscaler.com/zpa/configuring-application-segments-using-api
   Get information about ZPA Application Segment for Privileged Remote Access.
 ---
 
-# Data Source: zpa_application_segment_pra
+# zpa_application_segment_pra (Data Source)
+
+* [Official documentation](https://help.zscaler.com/zpa/about-privileged-remote-access-applications)
+* [API documentation](https://help.zscaler.com/zpa/configuring-application-segments-using-api)
 
 Use the **zpa_application_segment_pra** data source to get information about an application segment for Privileged Remote Access in the Zscaler Private Access cloud. This resource can then be referenced in an access policy rule, access policy timeout rule, access policy client forwarding rule and inspection policy. This resource supports Privileged Remote Access for both `RDP` and `SSH`.
 
+**NOTE:** To ensure consistent search results across data sources, please avoid using multiple spaces or special characters in your search queries.
+
 ## Example Usage
 
-```hcl
+```terraform
 # ZPA Application Segment Data Source
 data "zpa_application_segment_pra" "this" {
   name = "PRA_Example"
 }
 ```
 
-```hcl
+```terraform
 # ZPA Application Segment Data Source
 data "zpa_application_segment_pra" "this" {
   id = "123456789"
 }
 ```
 
-## Argument Reference
+## Schema
+
+### Required
 
 The following arguments are supported:
 
 * `name` - (Required) The name of the PRA Application Segment to be exported.
 
-## Attribute Reference
+### Read-Only
 
 In addition to all arguments above, the following attributes are exported:
 
 * `domain_names` - (string) List of domains and IPs.
 * `server_groups` - (string) List of Server Group IDs
   * `id:` - (string) List of Server Group IDs
-* `segment_group_id` - (String) Segment Group IDs
-* `creation_time` - (String)
-* `modified_time` - (String)
-* `modifiedby` - (String)
+* `segment_group_id` - (String) The unique identifier of the segment group
+* `creation_time` - (String) The time the application resource is created.
+* `modified_time` - (String) The time the application resource is modified
+* `modifiedby` - (String) The unique identifier of the tenant who modified the application resource
 * `tcp_port_ranges` - (string) TCP port ranges used to access the app.
 * `udp_port_ranges` - (string) UDP port ranges used to access the app.
 
@@ -66,6 +74,8 @@ In addition to all arguments above, the following attributes are exported:
 * `ip_anchored` - (bool)
 * `is_cname_enabled` - (bool) Indicates if the Zscaler Client Connector (formerly Zscaler App or Z App) receives CNAME DNS records from the connectors.
 * `passive_health_enabled` - (bool)
+* `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+* `microtenant_name` (string) The name of the microtenant the resource is to be associated with.
 
 * `sra_apps` - (string) TCP port ranges used to access the app.
   * `app_id:` - (string)
@@ -76,3 +86,9 @@ In addition to all arguments above, the following attributes are exported:
   * `application_protocol` - (string) Protocol for the Privileged Remote Access. Supported values: `RDP` and `SSH`
   * `connection_security` - (string) - Parameter required when `application_protocol` is of type `RDP`
   * `enabled` - (bool) Whether this application is enabled or not
+  * `select_connector_close_to_app` (bool)
+  * `use_in_dr_mode` (bool)
+  * `is_incomplete_dr_config` (bool)
+  * `select_connector_close_to_app` (bool)
+  * `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+  * `microtenant_name` (string) The name of the microtenant the resource is to be associated with.

@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/trustednetwork"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/trustednetwork"
 )
 
 func dataSourceTrustedNetwork() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceTrustedNetworkRead,
+		ReadContext: dataSourceTrustedNetworkRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeString,
@@ -24,7 +26,7 @@ func dataSourceTrustedNetwork() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"modifiedby": {
+			"modified_by": {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
@@ -39,6 +41,7 @@ func dataSourceTrustedNetwork() *schema.Resource {
 			"network_id": {
 				Type:     schema.TypeString,
 				Computed: true,
+				Optional: true,
 			},
 			"zscaler_cloud": {
 				Type:     schema.TypeString,
@@ -48,16 +51,22 @@ func dataSourceTrustedNetwork() *schema.Resource {
 	}
 }
 
-func dataSourceTrustedNetworkRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceTrustedNetworkRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
 	var resp *trustednetwork.TrustedNetwork
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for trusted network %s\n", id)
-		res, _, err := zClient.trustednetwork.Get(id)
+		res, _, err := trustednetwork.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err) // Wrap error using diag.FromErr
 		}
 		resp = res
 
@@ -65,9 +74,9 @@ func dataSourceTrustedNetworkRead(d *schema.ResourceData, m interface{}) error {
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for trusted network name %s\n", name)
-		res, _, err := zClient.trustednetwork.GetByName(name)
+		res, _, err := trustednetwork.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -75,14 +84,14 @@ func dataSourceTrustedNetworkRead(d *schema.ResourceData, m interface{}) error {
 		d.SetId(resp.ID)
 		_ = d.Set("creation_time", resp.CreationTime)
 		_ = d.Set("domain", resp.Domain)
-		_ = d.Set("modifiedby", resp.ModifiedBy)
+		_ = d.Set("modified_by", resp.ModifiedBy)
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
 		_ = d.Set("network_id", resp.NetworkID)
 		_ = d.Set("zscaler_cloud", resp.ZscalerCloud)
 
 	} else {
-		return fmt.Errorf("couldn't find any trusted network with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any trusted network with name '%s' or id '%s'", name, id))
 	}
 
 	return nil

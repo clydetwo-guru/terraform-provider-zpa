@@ -1,20 +1,26 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
-func TestAccPolicyInspectionRuleBasic(t *testing.T) {
+func TestAccResourcePolicyInspectionRule_Basic(t *testing.T) {
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAPolicyInspectionRule)
 	rName := acctest.RandomWithPrefix("tf-acc-test")
+	updatedRName := acctest.RandomWithPrefix("tf-updated") // New name for update test
 	randDesc := acctest.RandString(20)
+
+	// inspectionProfileTypeAndName, _, inspectionProfileGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAInspectionProfile)
+	// inspectionProfileHCL := testAccCheckInspectionProfileConfigure(inspectionProfileTypeAndName, "tf-acc-test-"+inspectionProfileGeneratedName, variable.InspectionProfileDescription, variable.InspectionProfileParanoia)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -31,19 +37,32 @@ func TestAccPolicyInspectionRuleBasic(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "1"),
 				),
+				// ExpectNonEmptyPlan: true,
 			},
-
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
 			// Update test
 			{
-				Config: testAccCheckPolicyInspectionRuleConfigure(resourceTypeAndName, generatedName, rName, randDesc),
+				Config: testAccCheckPolicyInspectionRuleConfigure(resourceTypeAndName, generatedName, updatedRName, randDesc),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckPolicyInspectionRuleExists(resourceTypeAndName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", rName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedRName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", randDesc),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "action", "INSPECT"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "1"),
 				),
+				// ExpectNonEmptyPlan: true,
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -51,7 +70,7 @@ func TestAccPolicyInspectionRuleBasic(t *testing.T) {
 
 func testAccCheckPolicyInspectionRuleDestroy(s *terraform.State) error {
 	apiClient := testAccProvider.Meta().(*Client)
-	accessPolicy, _, err := apiClient.policysetcontroller.GetByPolicyType("INSPECTION_POLICY")
+	accessPolicy, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "INSPECTION_POLICY")
 	if err != nil {
 		return fmt.Errorf("failed fetching resource INSPECTION_POLICY. Recevied error: %s", err)
 	}
@@ -60,7 +79,13 @@ func testAccCheckPolicyInspectionRuleDestroy(s *terraform.State) error {
 			continue
 		}
 
-		rule, _, err := apiClient.policysetcontroller.GetPolicyRule(accessPolicy.ID, rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		rule, _, err := policysetcontroller.GetPolicyRule(context.Background(), service, accessPolicy.ID, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -85,11 +110,17 @@ func testAccCheckPolicyInspectionRuleExists(resource string) resource.TestCheckF
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		resp, _, err := apiClient.policysetcontroller.GetByPolicyType("INSPECTION_POLICY")
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		resp, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "INSPECTION_POLICY")
 		if err != nil {
 			return fmt.Errorf("failed fetching resource INSPECTION_POLICY. Recevied error: %s", err)
 		}
-		_, _, err = apiClient.policysetcontroller.GetPolicyRule(resp.ID, rs.Primary.ID)
+		_, _, err = policysetcontroller.GetPolicyRule(context.Background(), service, resp.ID, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -120,8 +151,8 @@ data "%s" "%s" {
 func getPolicyInspectionRuleHCL(rName, generatedName, desc string) string {
 	return fmt.Sprintf(`
 
-data "zpa_policy_type" "inspection_policy" {
-	policy_type = "INSPECTION_POLICY"
+data "zpa_inspection_profile" "this" {
+	name = "BD_AppProtection_Profile1"
 }
 
 resource "%s" "%s" {
@@ -129,10 +160,8 @@ resource "%s" "%s" {
 	description   				= "%s"
 	action              		= "INSPECT"
 	operator      				= "AND"
-	policy_set_id 				= data.zpa_policy_type.inspection_policy.id
-	zpn_inspection_profile_id 	= zpa_inspection_profile.this.id
+	zpn_inspection_profile_id 	= data.zpa_inspection_profile.this.id
 	conditions {
-		negated  = false
 		operator = "OR"
 		operands {
 			object_type = "CLIENT_TYPE"
@@ -140,36 +169,7 @@ resource "%s" "%s" {
 			rhs         = "zpn_client_type_exporter"
 			}
 		}
-	depends_on = [zpa_inspection_profile.this]
-}
-
-data "zpa_inspection_predefined_controls" "this" {
-	name = "Failed to parse request body"
-	version    = "OWASP_CRS/3.3.0"
-  }
-
-  data "zpa_inspection_all_predefined_controls" "default_predefined_controls" {
-	version    = "OWASP_CRS/3.3.0"
-	group_name = "Preprocessors"
-  }
-
-  resource "zpa_inspection_profile" "this" {
-	name                        = "tf-acc-test"
-	description                 = "tf-acc-test"
-	paranoia_level              = "2"
-	dynamic "predefined_controls" {
-	  for_each = data.zpa_inspection_all_predefined_controls.default_predefined_controls.list
-	  content {
-		id           = predefined_controls.value.id
-		action       = predefined_controls.value.action == "" ? predefined_controls.value.default_action : predefined_controls.value.action
-		action_value = predefined_controls.value.action_value
-	  }
 	}
-	predefined_controls {
-	  id     = data.zpa_inspection_predefined_controls.this.id
-	  action = "BLOCK"
-	}
-}
 `,
 		// resource variables
 		resourcetype.ZPAPolicyInspectionRule,

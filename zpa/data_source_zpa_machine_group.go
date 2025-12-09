@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/machinegroup"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/machinegroup"
 )
 
 func dataSourceMachineGroup() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceMachineGroupRead,
+		ReadContext: dataSourceMachineGroupRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeString,
@@ -84,6 +86,14 @@ func dataSourceMachineGroup() *schema.Resource {
 								Type: schema.TypeString,
 							},
 						},
+						"microtenant_id": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
+						"microtenant_name": {
+							Type:     schema.TypeString,
+							Optional: true,
+						},
 					},
 				},
 			},
@@ -99,29 +109,43 @@ func dataSourceMachineGroup() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
 
-func dataSourceMachineGroupRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceMachineGroupRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
 	var resp *machinegroup.MachineGroup
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for machine group  %s\n", id)
-		res, _, err := zClient.machinegroup.Get(id)
+		res, _, err := machinegroup.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for machine group name %s\n", name)
-		res, _, err := zClient.machinegroup.GetByName(name)
+		res, _, err := machinegroup.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -133,10 +157,12 @@ func dataSourceMachineGroupRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("modified_by", resp.ModifiedBy)
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
+		_ = d.Set("microtenant_id", resp.MicroTenantID)
+		_ = d.Set("microtenant_name", resp.MicroTenantName)
 		_ = d.Set("machines", flattenMachines(resp))
 
 	} else {
-		return fmt.Errorf("couldn't find any machine group with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any machine group with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
@@ -158,6 +184,8 @@ func flattenMachines(machineGroup *machinegroup.MachineGroup) []interface{} {
 			"modified_time":      machineItem.ModifiedTime,
 			"name":               machineItem.Name,
 			"signing_cert":       machineItem.SigningCert,
+			"microtenant_id":     machineItem.MicroTenantID,
+			"microtenant_name":   machineItem.MicroTenantName,
 		}
 	}
 

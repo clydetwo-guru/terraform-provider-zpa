@@ -1,21 +1,22 @@
 package zpa
 
 import (
-	"fmt"
+	"context"
 	"log"
+	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/client"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/policysetcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
 func resourcePolicyTimeoutRule() *schema.Resource {
 	return &schema.Resource{
-		Create: resourcePolicyTimeoutRuleCreate,
-		Read:   resourcePolicyTimeoutRuleRead,
-		Update: resourcePolicyTimeoutRuleUpdate,
-		Delete: resourcePolicyTimeoutRuleDelete,
+		CreateContext: resourcePolicyTimeoutRuleCreate,
+		ReadContext:   resourcePolicyTimeoutRuleRead,
+		UpdateContext: resourcePolicyTimeoutRuleUpdate,
+		DeleteContext: resourcePolicyTimeoutRuleDelete,
 		Importer: &schema.ResourceImporter{
 			StateContext: importPolicyStateContextFunc([]string{"TIMEOUT_POLICY", "REAUTH_POLICY"}),
 		},
@@ -35,61 +36,79 @@ func resourcePolicyTimeoutRule() *schema.Resource {
 					"APP",
 					"APP_GROUP",
 					"CLIENT_TYPE",
-					"CLOUD_CONNECTOR_GROUP",
 					"IDP",
 					"POSTURE",
+					"PLATFORM",
 					"SAML",
 					"SCIM",
 					"SCIM_GROUP",
-					"TRUSTED_NETWORK",
 				}),
 			},
 		),
 	}
 }
 
-func resourcePolicyTimeoutRuleCreate(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func resourcePolicyTimeoutRuleCreate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
-	req, err := expandCreatePolicyTimeoutRule(d)
+	var policySetID string
+	var err error
+
+	if v, ok := d.GetOk("policy_set_id"); ok {
+		policySetID = v.(string)
+	} else {
+		policySetID, err = fetchPolicySetIDByType(ctx, zClient, "TIMEOUT_POLICY", microTenantID)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+	}
+
+	req, err := expandCreatePolicyTimeoutRule(d, policySetID)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 	log.Printf("[INFO] Creating zpa policy timeout rule with request\n%+v\n", req)
-	if ValidateConditions(req.Conditions, zClient) {
-		policysetcontroller, _, err := zClient.policysetcontroller.Create(req)
-		if err != nil {
-			return err
-		}
-		d.SetId(policysetcontroller.ID)
-		order, ok := d.GetOk("rule_order")
-		if ok {
-			reorder(order, policysetcontroller.PolicySetID, policysetcontroller.ID, zClient)
-		}
-		return resourcePolicyTimeoutRuleRead(d, m)
-	} else {
-		return fmt.Errorf("couldn't validate the zpa policy timeout (%s) operands, please make sure you are using valid inputs for APP type, LHS & RHS", req.Name)
+	if err := ValidateConditions(ctx, req.Conditions, zClient, microTenantID); err != nil {
+		return diag.FromErr(err)
 	}
 
+	resp, _, err := policysetcontroller.CreateRule(ctx, service, req)
+	if err != nil {
+		return diag.FromErr(err)
+	}
+
+	d.SetId(resp.ID)
+
+	return resourcePolicyTimeoutRuleRead(ctx, d, meta)
 }
 
-func resourcePolicyTimeoutRuleRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
-
-	globalPolicySet, _, err := zClient.policysetcontroller.GetByPolicyType("TIMEOUT_POLICY")
-	if err != nil {
-		return err
+func resourcePolicyTimeoutRuleRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
 	}
-	log.Printf("[INFO] Getting Policy Set Rule: globalPolicySet:%s id: %s\n", globalPolicySet.ID, d.Id())
-	resp, _, err := zClient.policysetcontroller.GetPolicyRule(globalPolicySet.ID, d.Id())
+
+	policySetID, err := fetchPolicySetIDByType(ctx, zClient, "TIMEOUT_POLICY", microTenantID)
 	if err != nil {
-		if obj, ok := err.(*client.ErrorResponse); ok && obj.IsObjectNotFound() {
+		return diag.FromErr(err)
+	}
+
+	log.Printf("[INFO] Getting Policy Set Rule: policySetID:%s id: %s\n", policySetID, d.Id())
+	resp, respErr, err := policysetcontroller.GetPolicyRule(ctx, service, policySetID, d.Id())
+	if err != nil {
+		if respErr != nil && (respErr.StatusCode == 404 || respErr.StatusCode == http.StatusNotFound) {
 			log.Printf("[WARN] Removing policy rule %s from state because it no longer exists in ZPA", d.Id())
 			d.SetId("")
 			return nil
 		}
-
-		return err
+		return diag.FromErr(err)
 	}
 
 	log.Printf("[INFO] Got Policy Set Timeout Rule:\n%+v\n", resp)
@@ -107,64 +126,79 @@ func resourcePolicyTimeoutRuleRead(d *schema.ResourceData, m interface{}) error 
 	_ = d.Set("reauth_default_rule", resp.ReauthDefaultRule)
 	_ = d.Set("reauth_idle_timeout", resp.ReauthIdleTimeout)
 	_ = d.Set("reauth_timeout", resp.ReauthTimeout)
-	_ = d.Set("rule_order", resp.RuleOrder)
+	_ = d.Set("microtenant_id", resp.MicroTenantID)
 	_ = d.Set("conditions", flattenPolicyConditions(resp.Conditions))
 
 	return nil
 }
 
-func resourcePolicyTimeoutRuleUpdate(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
-	globalPolicySet, _, err := zClient.policysetcontroller.GetByPolicyType("TIMEOUT_POLICY")
-	if err != nil {
-		return err
+func resourcePolicyTimeoutRuleUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
+	var policySetID string
+	var err error
+
+	if v, ok := d.GetOk("policy_set_id"); ok {
+		policySetID = v.(string)
+	} else {
+		policySetID, err = fetchPolicySetIDByType(ctx, zClient, "TIMEOUT_POLICY", microTenantID)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 	}
 	ruleID := d.Id()
 	log.Printf("[INFO] Updating policy timeout rule ID: %v\n", ruleID)
-	req, err := expandCreatePolicyRule(d)
+	req, err := expandCreatePolicyTimeoutRule(d, policySetID)
 	if err != nil {
-		return err
-	}
-	if ValidateConditions(req.Conditions, zClient) {
-		if _, err := zClient.policysetcontroller.Update(globalPolicySet.ID, ruleID, req); err != nil {
-			return err
-		}
-		if d.HasChange("rule_order") {
-			order, ok := d.GetOk("rule_order")
-			if ok {
-				reorder(order, globalPolicySet.ID, ruleID, zClient)
-			}
-		}
-		return resourcePolicyTimeoutRuleRead(d, m)
-	} else {
-		return fmt.Errorf("couldn't validate the zpa policy timeout (%s) operands, please make sure you are using valid inputs for APP type, LHS & RHS", req.Name)
+		return diag.FromErr(err)
 	}
 
+	if err := ValidateConditions(ctx, req.Conditions, zClient, microTenantID); err != nil {
+		return diag.FromErr(err)
+	}
+
+	if _, err := policysetcontroller.UpdateRule(ctx, service, policySetID, ruleID, req); err != nil {
+		return diag.FromErr(err)
+	}
+
+	return resourcePolicyTimeoutRuleRead(ctx, d, meta)
 }
 
-func resourcePolicyTimeoutRuleDelete(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
-	globalPolicySet, _, err := zClient.policysetcontroller.GetByPolicyType("TIMEOUT_POLICY")
-	if err != nil {
-		return err
+func resourcePolicyTimeoutRuleDelete(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
+	var policySetID string
+	var err error
+
+	if v, ok := d.GetOk("policy_set_id"); ok {
+		policySetID = v.(string)
+	} else {
+		policySetID, err = fetchPolicySetIDByType(ctx, zClient, "TIMEOUT_POLICY", microTenantID)
+		if err != nil {
+			return diag.FromErr(err)
+		}
 	}
 
 	log.Printf("[INFO] Deleting policy timeout rule with id %v\n", d.Id())
 
-	if _, err := zClient.policysetcontroller.Delete(globalPolicySet.ID, d.Id()); err != nil {
-		return err
+	if _, err := policysetcontroller.Delete(ctx, service, policySetID, d.Id()); err != nil {
+		return diag.FromErr(err)
 	}
 
 	return nil
-
 }
 
-func expandCreatePolicyTimeoutRule(d *schema.ResourceData) (*policysetcontroller.PolicyRule, error) {
-	policySetID, ok := d.Get("policy_set_id").(string)
-	if !ok {
-		return nil, fmt.Errorf("policy_set_id is not set")
-	}
-	log.Printf("[INFO] action_id:%v\n", d.Get("action_id"))
+func expandCreatePolicyTimeoutRule(d *schema.ResourceData, policySetID string) (*policysetcontroller.PolicyRule, error) {
 	conditions, err := ExpandPolicyConditions(d)
 	if err != nil {
 		return nil, err
@@ -177,13 +211,13 @@ func expandCreatePolicyTimeoutRule(d *schema.ResourceData) (*policysetcontroller
 		ID:                d.Get("id").(string),
 		Name:              d.Get("name").(string),
 		Operator:          d.Get("operator").(string),
-		PolicySetID:       policySetID,
 		PolicyType:        d.Get("policy_type").(string),
 		Priority:          d.Get("priority").(string),
+		MicroTenantID:     GetString(d.Get("microtenant_id")),
 		ReauthDefaultRule: d.Get("reauth_default_rule").(bool),
 		ReauthIdleTimeout: d.Get("reauth_idle_timeout").(string),
 		ReauthTimeout:     d.Get("reauth_timeout").(string),
-		RuleOrder:         d.Get("rule_order").(string),
+		PolicySetID:       policySetID,
 		Conditions:        conditions,
 	}, nil
 }

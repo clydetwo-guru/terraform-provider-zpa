@@ -1,49 +1,54 @@
 ---
+page_title: "zpa_application_segment_inspection Data Source - terraform-provider-zpa"
 subcategory: "Application Segment"
-layout: "zscaler"
-page_title: "ZPA: application_segment"
 description: |-
+  Official documentation https://help.zscaler.com/zpa/about-appprotection-applications
+  API documentation https://help.zscaler.com/zpa/configuring-application-segments-using-api
   Get information about ZPA Application Segment for Inspection.
 ---
 
-# Data Source: zpa_application_segment_inspection
+# zpa_application_segment_inspection (Data Source)
 
 Use the **zpa_application_segment_inspection** data source to get information about an inspection application segment in the Zscaler Private Access cloud. This resource can then be referenced in a ZPA access inspection policy. This resource supports ZPA Inspection for both `HTTP` and `HTTPS`.
 
+**NOTE:** To ensure consistent search results across data sources, please avoid using multiple spaces or special characters in your search queries.
+
 ## Example Usage
 
-```hcl
+```terraform
 # ZPA Inspection Application Segment Data Source
 data "zpa_application_segment_inspection" "this" {
   name = "ZPA_Inspection_Example"
 }
 ```
 
-```hcl
+```terraform
 # ZPA Inspection Application Segment Data Source
 data "zpa_application_segment_inspection" "this" {
   id = "123456789"
 }
 ```
 
-## Argument Reference
+## Schema
+
+### Required
 
 The following arguments are supported:
 
 * `name` - (Required) The name of the Inspection Application Segment to be exported.
 * `id` - (Optional) The ID of the Inspection Application Segment to be exported.
 
-## Attribute Reference
+### Read-Only
 
 In addition to all arguments above, the following attributes are exported:
 
 * `domain_names` - (string) List of domains and IPs.
 * `server_groups` - (string) List of Server Group IDs
   * `id:` - (string) List of Server Group IDs
-* `segment_group_id` - (String) Segment Group IDs
-* `creation_time` - (String)
-* `modified_time` - (String)
-* `modifiedby` - (String)
+* `segment_group_id` - (String) The unique identifier of the segment group
+* `creation_time` - (String) The time the application resource is created.
+* `modified_time` - (String) The time the application resource is modified
+* `modifiedby` - (String) The unique identifier of the tenant who modified the application resource
 * `tcp_port_ranges` - (string) TCP port ranges used to access the app.
 * `udp_port_ranges` - (string) UDP port ranges used to access the app.
 
@@ -67,6 +72,8 @@ In addition to all arguments above, the following attributes are exported:
 * `ip_anchored` - (bool)
 * `is_cname_enabled` - (bool) Indicates if the Zscaler Client Connector (formerly Zscaler App or Z App) receives CNAME DNS records from the connectors.
 * `passive_health_enabled` - (bool)
+* `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+* `microtenant_name` (string) The name of the microtenant the resource is to be associated with.
 
 * `inspection_apps` - (string) TCP port ranges used to access the app.
   * `app_id:` - (string)
@@ -78,3 +85,9 @@ In addition to all arguments above, the following attributes are exported:
   * `certificate_id` - (string) - ID of the signing certificate. This field is required if the applicationProtocol is set to `HTTPS`. The certificateId is not supported if the applicationProtocol is set to `HTTP`.
   * `certificate_name` - (string) - Parameter required when `application_protocol` is of type `HTTPS`
   * `enabled` - (bool) Whether this application is enabled or not
+  * `select_connector_close_to_app` (bool)
+  * `use_in_dr_mode` (bool)
+  * `is_incomplete_dr_config` (bool)
+  * `select_connector_close_to_app` (bool)
+  * `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+  * `microtenant_name` (string) The name of the microtenant the resource is to be associated with.

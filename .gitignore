@@ -54,3 +54,6 @@ dist/*
 local_test/
 local_test/*
 acceptance_test.yml
+.VSCodeCounter
+zpacoverage.out
+zpacoverage.html

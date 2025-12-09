@@ -1,16 +1,19 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/samlattribute"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/idpcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/samlattribute"
 )
 
 func dataSourceSamlAttribute() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceSamlAttributeRead,
+		ReadContext: dataSourceSamlAttributeRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeString,
@@ -54,29 +57,71 @@ func dataSourceSamlAttribute() *schema.Resource {
 	}
 }
 
-func dataSourceSamlAttributeRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceSamlAttributeRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 
 	var resp *samlattribute.SamlAttribute
-	id, ok := d.Get("id").(string)
-	if ok && id != "" {
-		log.Printf("[INFO] Getting data for saml attribute %s\n", id)
-		res, _, err := zClient.samlattribute.Get(id)
-		if err != nil {
-			return err
-		}
-		resp = res
+	idpId, okidpId := d.Get("idp_id").(string)
+	idpName, okIdpName := d.Get("idp_name").(string)
 
+	// Check that either `idp_id` or `idp_name` is provided
+	if (!okIdpName && !okidpId) || (idpId == "" && idpName == "") {
+		log.Printf("[INFO] IDP name or ID is required\n")
+		return diag.FromErr(fmt.Errorf("idp name or id is required"))
 	}
-	name, ok := d.Get("name").(string)
-	if ok && id == "" && name != "" {
-		log.Printf("[INFO] Getting data for saml attribute %s\n", name)
-		res, _, err := zClient.samlattribute.GetByName(name)
+
+	var idpResp *idpcontroller.IdpController
+	// Fetch the IDP Controller by ID or name
+	if idpId != "" {
+		resp, _, err := idpcontroller.Get(ctx, service, idpId)
+		if err != nil || resp == nil {
+			log.Printf("[INFO] Couldn't find IDP by ID: %s\n", idpId)
+			return diag.FromErr(fmt.Errorf("error fetching IDP by ID: %w", err))
+		}
+		idpResp = resp
+	} else {
+		resp, _, err := idpcontroller.GetByName(ctx, service, idpName)
+		if err != nil || resp == nil {
+			log.Printf("[INFO] Couldn't find IDP by name: %s\n", idpName)
+			return diag.FromErr(fmt.Errorf("error fetching IDP by name: %w", err))
+		}
+		idpResp = resp
+	}
+
+	// Declare variables for id and name to ensure they are accessible in the final error message
+	id, idExists := d.Get("id").(string)
+	name, nameExists := d.Get("name").(string)
+
+	// Retrieve SAML attribute by ID or name within the specified IDP
+	if idExists && id != "" {
+		// Use IDP-specific lookup for SAML attribute by ID
+		res, _, err := samlattribute.GetByIdpAndAttributeID(ctx, service, idpResp.ID, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
+	} else if nameExists && name != "" {
+		// Get all SAML attributes for the IDP and find by name
+		samlAttrs, _, err := samlattribute.GetAllByIdp(ctx, service, idpResp.ID)
+		if err != nil {
+			return diag.FromErr(err)
+		}
+
+		// Find the SAML attribute by name within this IDP
+		for _, attr := range samlAttrs {
+			if attr.Name == name {
+				resp = &attr
+				break
+			}
+		}
+
+		if resp == nil {
+			return diag.FromErr(fmt.Errorf("no SAML attribute named '%s' was found in IDP '%s'", name, idpResp.Name))
+		}
 	}
+
+	// Set the resource data if the response is not nil
 	if resp != nil {
 		d.SetId(resp.ID)
 		_ = d.Set("creation_time", resp.CreationTime)
@@ -88,7 +133,8 @@ func dataSourceSamlAttributeRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("saml_name", resp.SamlName)
 		_ = d.Set("user_attribute", resp.UserAttribute)
 	} else {
-		return fmt.Errorf("couldn't find any saml attribute with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any SAML attribute with name '%s' or id '%s' in IDP '%s'", name, id, idpResp.Name))
 	}
+
 	return nil
 }

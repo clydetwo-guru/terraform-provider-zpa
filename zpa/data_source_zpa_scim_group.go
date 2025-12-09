@@ -1,17 +1,20 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/scimgroup"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/idpcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/scimgroup"
 )
 
 func dataSourceScimGroup() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceScimGroupRead,
+		ReadContext: dataSourceScimGroupRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeInt,
@@ -45,31 +48,63 @@ func dataSourceScimGroup() *schema.Resource {
 	}
 }
 
-func dataSourceScimGroupRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceScimGroupRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	// Ensure the service is set correctly before proceeding
+	if service == nil {
+		return diag.FromErr(fmt.Errorf("ScimGroup service is not available"))
+	}
+
 	var resp *scimgroup.ScimGroup
-	id, ok := d.Get("id").(string)
-	if ok && id != "" {
-		res, _, err := zClient.scimgroup.Get(id)
-		if err != nil {
-			return err
-		}
-		resp = res
+	idpId, okidpId := d.Get("idp_id").(string)
+	idpName, okIdpName := d.Get("idp_name").(string)
+
+	// Ensure either IDP name or ID is provided
+	if (!okIdpName && !okidpId) || (idpId == "" && idpName == "") {
+		log.Printf("[INFO] IDP name or ID is required\n")
+		return diag.FromErr(fmt.Errorf("IDP name or ID is required"))
 	}
-	idpName, ok := d.Get("idp_name").(string)
-	name, ok2 := d.Get("name").(string)
-	if id == "" && ok && ok2 && idpName != "" && name != "" {
-		idpResp, _, err := zClient.idpcontroller.GetByName(idpName)
+
+	var idpResp *idpcontroller.IdpController
+	var err error
+	// Get IDP Controller by ID or name
+	if idpId != "" {
+		idpResp, _, err = idpcontroller.Get(ctx, service, idpId)
 		if err != nil || idpResp == nil {
-			log.Printf("[INFO] couldn't find idp by name: %s\n", idpName)
-			return err
+			log.Printf("[INFO] Couldn't find IDP by ID: %s\n", idpId)
+			return diag.FromErr(fmt.Errorf("error fetching IDP by ID: %w", err))
 		}
-		res, _, err := zClient.scimgroup.GetByName(name, idpResp.ID)
+	} else {
+		idpResp, _, err = idpcontroller.GetByName(ctx, service, idpName)
+		if err != nil || idpResp == nil {
+			log.Printf("[INFO] Couldn't find IDP by name: %s\n", idpName)
+			return diag.FromErr(fmt.Errorf("error fetching IDP by name: %w", err))
+		}
+	}
+
+	// Declare variables for id and name to ensure they are accessible in the final error message
+	id, idExists := d.Get("id").(string)
+	name, nameExists := d.Get("name").(string)
+
+	// Retrieve SCIM group by ID or name
+	if idExists && id != "" {
+		res, _, err := scimgroup.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
+		}
+		resp = res
+	} else if nameExists && name != "" && idpResp != nil {
+		// Check idpResp is non-nil before accessing its fields
+		res, _, err := scimgroup.GetByName(ctx, service, name, idpResp.ID)
+		if err != nil {
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
+
+	// Set resource data if the response is not nil
 	if resp != nil {
 		d.SetId(strconv.FormatInt(int64(resp.ID), 10))
 		_ = d.Set("creation_time", resp.CreationTime)
@@ -79,7 +114,7 @@ func dataSourceScimGroupRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
 	} else {
-		return fmt.Errorf("no scim name '%s' & idp name '%s' OR id '%s' was found", name, idpName, id)
+		return diag.FromErr(fmt.Errorf("no SCIM group with name '%s' and IDP name '%s', or ID '%s' was found", name, idpName, id))
 	}
 	return nil
 }

@@ -1,19 +1,22 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
-func TestAccPolicyForwardingRuleBasic(t *testing.T) {
+func TestAccResourcePolicyForwardingRule_Basic(t *testing.T) {
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAPolicyForwardingRule)
 	rName := acctest.RandomWithPrefix("tf-acc-test")
+	updatedRName := acctest.RandomWithPrefix("tf-updated") // New name for update test
 	randDesc := acctest.RandString(20)
 
 	resource.Test(t, resource.TestCase{
@@ -35,15 +38,21 @@ func TestAccPolicyForwardingRuleBasic(t *testing.T) {
 
 			// Update test
 			{
-				Config: testAccCheckPolicyForwardingRuleConfigure(resourceTypeAndName, generatedName, rName, randDesc),
+				Config: testAccCheckPolicyForwardingRuleConfigure(resourceTypeAndName, generatedName, updatedRName, randDesc),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckPolicyForwardingRuleExists(resourceTypeAndName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", rName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedRName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", randDesc),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "action", "BYPASS"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "2"),
 				),
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -51,16 +60,22 @@ func TestAccPolicyForwardingRuleBasic(t *testing.T) {
 
 func testAccCheckPolicyForwardingRuleDestroy(s *terraform.State) error {
 	apiClient := testAccProvider.Meta().(*Client)
-	accessPolicy, _, err := apiClient.policysetcontroller.GetByPolicyType("CLIENT_FORWARDING_POLICY")
+	accessPolicy, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "CLIENT_FORWARDING_POLICY")
 	if err != nil {
-		return fmt.Errorf("failed fetching resource CLIENT_FORWARDING_POLICY. Recevied error: %s", err)
+		return fmt.Errorf("failed fetching resource CLIENT_FORWARDING_POLICY. Received error: %s", err)
 	}
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourcetype.ZPAPolicyAccessRule {
 			continue
 		}
 
-		rule, _, err := apiClient.policysetcontroller.GetPolicyRule(accessPolicy.ID, rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		rule, _, err := policysetcontroller.GetPolicyRule(context.Background(), service, accessPolicy.ID, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -85,13 +100,19 @@ func testAccCheckPolicyForwardingRuleExists(resource string) resource.TestCheckF
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		resp, _, err := apiClient.policysetcontroller.GetByPolicyType("CLIENT_FORWARDING_POLICY")
-		if err != nil {
-			return fmt.Errorf("failed fetching resource CLIENT_FORWARDING_POLICY. Recevied error: %s", err)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
 		}
-		_, _, err = apiClient.policysetcontroller.GetPolicyRule(resp.ID, rs.Primary.ID)
+
+		resp, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "CLIENT_FORWARDING_POLICY")
 		if err != nil {
-			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
+			return fmt.Errorf("failed fetching resource CLIENT_FORWARDING_POLICY. Received error: %s", err)
+		}
+		_, _, err = policysetcontroller.GetPolicyRule(context.Background(), service, resp.ID, rs.Primary.ID)
+		if err != nil {
+			return fmt.Errorf("failed fetching resource %s. Received error: %s", resource, err)
 		}
 		return nil
 	}
@@ -120,10 +141,6 @@ data "%s" "%s" {
 func getPolicyForwardingRuleHCL(rName, generatedName, desc string) string {
 	return fmt.Sprintf(`
 
-data "zpa_policy_type" "forwarding_policy" {
-	policy_type = "CLIENT_FORWARDING_POLICY"
-}
-
 data "zpa_posture_profile" "crwd_zta_score_80" {
 	name = "CrowdStrike_ZPA_ZTA_80 (zscalertwo.net)"
 }
@@ -142,9 +159,7 @@ resource "%s" "%s" {
 	description   		= "%s"
 	action              = "BYPASS"
 	operator      		= "AND"
-	policy_set_id 		= data.zpa_policy_type.forwarding_policy.id
 	conditions {
-		negated  = false
 		operator = "OR"
 		operands {
 		  object_type = "POSTURE"
@@ -153,7 +168,6 @@ resource "%s" "%s" {
 		}
 	  }
 	  conditions {
-		negated  = false
 		operator = "OR"
 		operands {
 		  object_type = "SCIM_GROUP"

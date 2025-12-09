@@ -1,21 +1,25 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/segmentgroup"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/segmentgroup"
 )
 
-func TestAccResourceSegmentGroupBasic(t *testing.T) {
+func TestAccResourceSegmentGroup_Basic(t *testing.T) {
 	var segmentGroup segmentgroup.SegmentGroup
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPASegmentGroup)
+
+	initialName := "tf-acc-test-" + generatedName
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -23,10 +27,10 @@ func TestAccResourceSegmentGroupBasic(t *testing.T) {
 		CheckDestroy: testAccCheckSegmentGroupDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCheckSegmentGroupConfigure(resourceTypeAndName, generatedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled),
+				Config: testAccCheckSegmentGroupConfigure(resourceTypeAndName, initialName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckSegmentGroupExists(resourceTypeAndName, &segmentGroup),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", initialName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.SegmentGroupDescription),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.SegmentGroupEnabled)),
 				),
@@ -34,13 +38,19 @@ func TestAccResourceSegmentGroupBasic(t *testing.T) {
 
 			// Update test
 			{
-				Config: testAccCheckSegmentGroupConfigure(resourceTypeAndName, generatedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled),
+				Config: testAccCheckSegmentGroupConfigure(resourceTypeAndName, initialName, variable.SegmentGroupDescriptionUpdate, variable.SegmentGroupEnabledUpdate),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckSegmentGroupExists(resourceTypeAndName, &segmentGroup),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.SegmentGroupDescription),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.SegmentGroupEnabled)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", initialName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.SegmentGroupDescriptionUpdate),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.SegmentGroupEnabledUpdate)),
 				),
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -54,7 +64,13 @@ func testAccCheckSegmentGroupDestroy(s *terraform.State) error {
 			continue
 		}
 
-		group, _, err := apiClient.segmentgroup.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		group, _, err := segmentgroup.Get(context.Background(), service, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -79,8 +95,13 @@ func testAccCheckSegmentGroupExists(resource string, group *segmentgroup.Segment
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		receivedGroup, _, err := apiClient.segmentgroup.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
 
+		receivedGroup, _, err := segmentgroup.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -91,38 +112,30 @@ func testAccCheckSegmentGroupExists(resource string, group *segmentgroup.Segment
 }
 
 func testAccCheckSegmentGroupConfigure(resourceTypeAndName, generatedName, description string, enabled bool) string {
-	return fmt.Sprintf(`
-// segment group resource
-%s
+	resourceName := strings.Split(resourceTypeAndName, ".")[1] // Extract the resource name
 
-data "%s" "%s" {
-  id = "${%s.id}"
-}
-`,
-		// resource variables
-		SegmentGroupResourceHCL(generatedName, description, enabled),
-
-		// data source variables
-		resourcetype.ZPASegmentGroup,
-		generatedName,
-		resourceTypeAndName,
-	)
-}
-
-func SegmentGroupResourceHCL(generatedName, description string, enabled bool) string {
 	return fmt.Sprintf(`
 resource "%s" "%s" {
 	name = "%s"
 	description = "%s"
 	enabled = "%s"
 }
+
+data "%s" "%s" {
+  id = "${%s.%s.id}"
+}
 `,
-		// resource variables
+		// Resource type and name for the certificate
 		resourcetype.ZPASegmentGroup,
+		resourceName,
 		generatedName,
-		generatedName,
-		// variable.SegmentGroupResourceName,
 		description,
 		strconv.FormatBool(enabled),
+
+		// Data source type and name
+		resourcetype.ZPASegmentGroup, resourceName,
+
+		// Reference to the resource
+		resourcetype.ZPASegmentGroup, resourceName,
 	)
 }

@@ -1,27 +1,25 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/applicationsegmentinspection"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/applicationsegmentinspection"
 )
 
-func TestAccResourceApplicationSegmentInspectionBasic(t *testing.T) {
+func TestAccResourceApplicationSegmentInspection_Basic(t *testing.T) {
 	var appSegment applicationsegmentinspection.AppSegmentInspection
 	appSegmentTypeAndName, _, appSegmentGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAApplicationSegmentInspection)
 
-	serverGroupTypeAndName, _, serverGroupGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAServerGroup)
-	serverGroupHCL := testAccCheckServerGroupConfigure(serverGroupTypeAndName, serverGroupGeneratedName, "", "", "", "", variable.ServerGroupEnabled, variable.ServerGroupDynamicDiscovery)
-
 	segmentGroupTypeAndName, _, segmentGroupGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPASegmentGroup)
-	segmentGroupHCL := testAccCheckSegmentGroupConfigure(segmentGroupTypeAndName, segmentGroupGeneratedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled)
+	segmentGroupHCL := testAccCheckSegmentGroupConfigure(segmentGroupTypeAndName, "tf-acc-test-"+segmentGroupGeneratedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -29,7 +27,7 @@ func TestAccResourceApplicationSegmentInspectionBasic(t *testing.T) {
 		CheckDestroy: testAccCheckApplicationSegmentInspectionDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCheckApplicationSegmentInspectionConfigure(appSegmentTypeAndName, appSegmentGeneratedName, appSegmentGeneratedName, appSegmentGeneratedName, segmentGroupHCL, segmentGroupTypeAndName, serverGroupHCL, serverGroupTypeAndName, variable.AppSegmentEnabled, variable.AppSegmentCnameEnabled),
+				Config: testAccCheckApplicationSegmentInspectionConfigure(appSegmentTypeAndName, appSegmentGeneratedName, appSegmentGeneratedName, appSegmentGeneratedName, segmentGroupHCL, segmentGroupTypeAndName, variable.AppSegmentEnabled, variable.AppSegmentCnameEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckApplicationSegmentInspectionExists(appSegmentTypeAndName, &appSegment),
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "name", "tf-acc-test-"+appSegmentGeneratedName),
@@ -42,12 +40,11 @@ func TestAccResourceApplicationSegmentInspectionBasic(t *testing.T) {
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "common_apps_dto.#", "1"),
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "tcp_port_ranges.#", "2"),
 				),
-				ExpectNonEmptyPlan: true,
 			},
 
 			// Update test
 			{
-				Config: testAccCheckApplicationSegmentInspectionConfigure(appSegmentTypeAndName, appSegmentGeneratedName, appSegmentGeneratedName, appSegmentGeneratedName, segmentGroupHCL, segmentGroupTypeAndName, serverGroupHCL, serverGroupTypeAndName, variable.AppSegmentEnabled, variable.AppSegmentCnameEnabled),
+				Config: testAccCheckApplicationSegmentInspectionConfigure(appSegmentTypeAndName, appSegmentGeneratedName, appSegmentGeneratedName, appSegmentGeneratedName, segmentGroupHCL, segmentGroupTypeAndName, variable.AppSegmentEnabled, variable.AppSegmentCnameEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckApplicationSegmentInspectionExists(appSegmentTypeAndName, &appSegment),
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "name", "tf-acc-test-"+appSegmentGeneratedName),
@@ -60,61 +57,78 @@ func TestAccResourceApplicationSegmentInspectionBasic(t *testing.T) {
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "common_apps_dto.#", "1"),
 					resource.TestCheckResourceAttr(appSegmentTypeAndName, "tcp_port_ranges.#", "2"),
 				),
-				ExpectNonEmptyPlan: true,
+			},
+			// Import test
+			{
+				ResourceName:      appSegmentTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
 }
 
 func testAccCheckApplicationSegmentInspectionDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*Client)
+	apiClient := testAccProvider.Meta().(*Client)
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourcetype.ZPAApplicationSegmentInspection {
 			continue
 		}
 
-		_, _, err := client.applicationsegment.GetByName(rs.Primary.Attributes["name"])
-		if err == nil {
-			return fmt.Errorf("Inspection Application Segment still exists")
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
 		}
 
-		return nil
+		appSegment, _, err := applicationsegmentinspection.Get(context.Background(), service, rs.Primary.ID)
+		if err == nil {
+			return fmt.Errorf("id %s already exists", rs.Primary.ID)
+		}
+
+		if appSegment != nil {
+			return fmt.Errorf("application segment inspection with id %s exists and wasn't destroyed", rs.Primary.ID)
+		}
 	}
+
 	return nil
 }
 
 func testAccCheckApplicationSegmentInspectionExists(resource string, segment *applicationsegmentinspection.AppSegmentInspection) resource.TestCheckFunc {
-	return func(s *terraform.State) error {
-		rs, ok := s.RootModule().Resources[resource]
+	return func(state *terraform.State) error {
+		rs, ok := state.RootModule().Resources[resource]
 		if !ok {
-			return fmt.Errorf("Inspection Application Segment Not found: %s", resource)
+			return fmt.Errorf("didn't find resource: %s", resource)
 		}
 		if rs.Primary.ID == "" {
-			return fmt.Errorf("no Inspection Application Segment ID is set")
+			return fmt.Errorf("no record ID is set")
 		}
-		client := testAccProvider.Meta().(*Client)
-		resp, _, err := client.applicationsegmentinspection.GetByName(rs.Primary.Attributes["name"])
+
+		apiClient := testAccProvider.Meta().(*Client)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		receivedSegment, _, err := applicationsegmentinspection.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
-		if resp.Name != rs.Primary.Attributes["name"] {
-			return fmt.Errorf("name Not found in created attributes")
-		}
-		if resp.Description != rs.Primary.Attributes["description"] {
-			return fmt.Errorf("description Not found in created attributes")
-		}
+		*segment = *receivedSegment
+
 		return nil
 	}
 }
 
-func testAccCheckApplicationSegmentInspectionConfigure(resourceTypeAndName, generatedName, name, description, segmentGroupHCL, segmentGroupTypeAndName, serverGroupHCL, serverGroupTypeAndName string, enabled, cnameEnabled bool) string {
+func testAccCheckApplicationSegmentInspectionConfigure(resourceTypeAndName, generatedName, name, description, segmentGroupHCL, segmentGroupTypeAndName string, enabled bool, cnameEnabled bool) string {
 	return fmt.Sprintf(`
 
 // segment group resource
 %s
 
-// application segment resource
+// application segment inspection resource
 %s
 
 data "%s" "%s" {
@@ -124,7 +138,7 @@ data "%s" "%s" {
 		// resource variables
 		segmentGroupHCL,
 		// serverGroupHCL,
-		getApplicationSegmentInspectionResourceHCL(generatedName, name, description, segmentGroupTypeAndName, serverGroupTypeAndName, enabled, cnameEnabled),
+		getApplicationSegmentInspectionResourceHCL(generatedName, name, description, segmentGroupTypeAndName, enabled, cnameEnabled),
 
 		// data source variables
 		resourcetype.ZPAApplicationSegmentInspection,
@@ -133,11 +147,11 @@ data "%s" "%s" {
 	)
 }
 
-func getApplicationSegmentInspectionResourceHCL(generatedName, name, description, segmentGroupTypeAndName, serverGroupTypeAndName string, enabled, cnameEnabled bool) string {
+func getApplicationSegmentInspectionResourceHCL(generatedName, name, description, segmentGroupTypeAndName string, enabled bool, cnameEnabled bool) string {
 	return fmt.Sprintf(`
 
-data "zpa_ba_certificate" "jenkins" {
-	name = "jenkins.bd-hashicorp.com"
+data "zpa_ba_certificate" "sales" {
+	name = "sales.bd-hashicorp.com"
 }
 
 resource "%s" "%s" {
@@ -145,27 +159,21 @@ resource "%s" "%s" {
 	description = "tf-acc-test-%s"
 	enabled = "%s"
 	is_cname_enabled = "%s"
+	select_connector_close_to_app = true
 	health_reporting = "ON_ACCESS"
 	bypass_type = "NEVER"
-	tcp_port_range {
-		from = "443"
-		to = "443"
-	}
-	domain_names = ["jenkins.bd-hashicorp.com"]
+	tcp_keep_alive = "1"
+	tcp_port_ranges  = ["443", "443"]
+	domain_names = ["sales.bd-hashicorp.com"]
 	segment_group_id = "${%s.id}"
 	common_apps_dto {
 		apps_config {
-		  name                 = "jenkins.bd-hashicorp.com"
-		  domain               = "jenkins.bd-hashicorp.com"
+		  domain               = "sales.bd-hashicorp.com"
 		  application_protocol = "HTTPS"
 		  application_port     = "443"
-		  certificate_id       = data.zpa_ba_certificate.jenkins.id
-		  enabled = true
+		  certificate_id       = data.zpa_ba_certificate.sales.id
 		  app_types = ["INSPECT"]
 		}
-	}
-	server_groups {
-		id = []
 	}
 	depends_on = [ %s ]
 }
@@ -174,13 +182,11 @@ resource "%s" "%s" {
 		// resource variables
 		resourcetype.ZPAApplicationSegmentInspection,
 		generatedName,
-		generatedName,
-		generatedName,
+		name,
+		description,
 		strconv.FormatBool(enabled),
 		strconv.FormatBool(cnameEnabled),
 		segmentGroupTypeAndName,
-		// serverGroupTypeAndName,
 		segmentGroupTypeAndName,
-		// serverGroupTypeAndName,
 	)
 }

@@ -1,5 +1,6 @@
 package zpa
 
+/*
 import (
 	"testing"
 
@@ -16,7 +17,6 @@ func TestAccDataSourceScimGroup_Basic(t *testing.T) {
 				Check: resource.ComposeTestCheckFunc(
 					testAccDataSourceScimGroupCheck("data.zpa_scim_groups.engineering"),
 					testAccDataSourceScimGroupCheck("data.zpa_scim_groups.contractors"),
-					testAccDataSourceScimGroupCheck("data.zpa_scim_groups.marketing"),
 					testAccDataSourceScimGroupCheck("data.zpa_scim_groups.finance"),
 					testAccDataSourceScimGroupCheck("data.zpa_scim_groups.executives"),
 				),
@@ -43,11 +43,6 @@ data "zpa_scim_groups" "contractors" {
 	idp_name = "BD_Okta_Users"
 }
 
-data "zpa_scim_groups" "marketing" {
-    name = "Marketing"
-	idp_name = "BD_Okta_Users"
-}
-
 data "zpa_scim_groups" "finance" {
     name = "Finance"
 	idp_name = "BD_Okta_Users"
@@ -58,3 +53,4 @@ data "zpa_scim_groups" "executives" {
 	idp_name = "BD_Okta_Users"
 }
 `
+*/

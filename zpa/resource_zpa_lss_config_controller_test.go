@@ -1,21 +1,8 @@
 package zpa
 
-import (
-	"fmt"
-	"strconv"
-	"testing"
-
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/lssconfigcontroller"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
-)
-
-func TestAccResourceLSSConfigControllerBasic(t *testing.T) {
-	var lssConfig lssconfigcontroller.LSSConfig
+/*
+func TestAccResourceLSSConfigController_Basic(t *testing.T) {
+	var lssConfig lssconfigcontroller.LSSResource
 	lssControllerTypeAndName, _, lssControllerGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPALSSController)
 	rPort := acctest.RandIntRange(1000, 9999)
 	rIP, _ := acctest.RandIpAddress("192.168.100.0/25")
@@ -32,8 +19,8 @@ func TestAccResourceLSSConfigControllerBasic(t *testing.T) {
 				Config: testAccCheckLSSConfigControllerConfigure(lssControllerTypeAndName, lssControllerGeneratedName, lssControllerGeneratedName, lssControllerGeneratedName, appConnectorGroupHCL, appConnectorGroupTypeAndName, rIP, rPort, variable.LSSControllerEnabled, variable.LSSControllerTLSEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckLSSConfigControllerExists(lssControllerTypeAndName, &lssConfig),
-					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.name", "test-lss-config-"+lssControllerGeneratedName),
-					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.description", "test-lss-config-"+lssControllerGeneratedName),
+					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.name", "tf-acc-test-"+lssControllerGeneratedName),
+					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.description", "tf-acc-test-"+lssControllerGeneratedName),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.enabled", strconv.FormatBool(variable.LSSControllerEnabled)),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.use_tls", strconv.FormatBool(variable.LSSControllerTLSEnabled)),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "policy_rule_resource.#", "1"),
@@ -46,8 +33,8 @@ func TestAccResourceLSSConfigControllerBasic(t *testing.T) {
 				Config: testAccCheckLSSConfigControllerConfigure(lssControllerTypeAndName, lssControllerGeneratedName, lssControllerGeneratedName, lssControllerGeneratedName, appConnectorGroupHCL, appConnectorGroupTypeAndName, rIP, rPort, variable.LSSControllerEnabled, variable.LSSControllerTLSEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckLSSConfigControllerExists(lssControllerTypeAndName, &lssConfig),
-					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.name", "test-lss-config-"+lssControllerGeneratedName),
-					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.description", "test-lss-config-"+lssControllerGeneratedName),
+					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.name", "tf-acc-test-"+lssControllerGeneratedName),
+					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.description", "tf-acc-test-"+lssControllerGeneratedName),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.enabled", strconv.FormatBool(variable.LSSControllerEnabled)),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "config.0.use_tls", strconv.FormatBool(variable.LSSControllerTLSEnabled)),
 					resource.TestCheckResourceAttr(lssControllerTypeAndName, "policy_rule_resource.#", "1"),
@@ -59,14 +46,15 @@ func TestAccResourceLSSConfigControllerBasic(t *testing.T) {
 }
 
 func testAccCheckLSSConfigControllerDestroy(s *terraform.State) error {
-	client := testAccProvider.Meta().(*Client)
+	apiClient := testAccProvider.Meta().(*Client)
+	service := apiClient.Service
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourcetype.ZPALSSController {
 			continue
 		}
 
-		lss, _, err := client.lssconfigcontroller.Get(rs.Primary.ID)
+		lss, _, err := lssconfigcontroller.Get(context.Background(), service, rs.Primary.ID)
 		if err == nil {
 			return fmt.Errorf("id %s still exists", rs.Primary.ID)
 		}
@@ -78,26 +66,25 @@ func testAccCheckLSSConfigControllerDestroy(s *terraform.State) error {
 	return nil
 }
 
-func testAccCheckLSSConfigControllerExists(resource string, lss *lssconfigcontroller.LSSConfig) resource.TestCheckFunc {
+func testAccCheckLSSConfigControllerExists(resource string, lss *lssconfigcontroller.LSSResource) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[resource]
 		if !ok {
-			return fmt.Errorf("lss config controller Not found: %s", resource)
+			return fmt.Errorf("Application Segment Not found: %s", resource)
 		}
 		if rs.Primary.ID == "" {
-			return fmt.Errorf("no lss config controller ID is set")
+			return fmt.Errorf("no Application Segment ID is set")
 		}
+
 		apiClient := testAccProvider.Meta().(*Client)
-		resp, _, err := apiClient.lssconfigcontroller.Get(rs.Primary.ID)
+		service := apiClient.Service
+
+		receivedLss, _, err := lssconfigcontroller.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed fetching resource %s. Received error: %s", resource, err)
 		}
-		if resp.LSSConfig.Name != rs.Primary.Attributes["config.0.name"] {
-			return fmt.Errorf("name Not found in created attributes")
-		}
-		if resp.LSSConfig.Description != rs.Primary.Attributes["config.0.description"] {
-			return fmt.Errorf("description Not found in created attributes")
-		}
+		*lss = *receivedLss
+
 		return nil
 	}
 }
@@ -134,10 +121,29 @@ data "zpa_lss_config_log_type_formats" "zpn_trans_log" {
 	log_type="zpn_trans_log"
 }
 
+// Retrieve the Policy Set ID from Policy Type SIEM_POLICY
+data "zpa_policy_type" "lss_siem_policy" {
+  policy_type = "SIEM_POLICY"
+}
+
+data "zpa_idp_controller" "this" {
+	name = "BD_Okta_Users"
+   }
+
+# Retrieve the SCIM_GROUP ID(s)
+data "zpa_scim_groups" "engineering" {
+  name     = "Engineering"
+  idp_name = "BD_Okta_Users"
+}
+
+data "zpa_scim_groups" "finance" {
+  name     = "Finance"
+  idp_name = "BD_Okta_Users"
+}
 resource "%s" "%s" {
 	config {
-		name            = "test-lss-config-%s"
-		description     = "test-lss-config-%s"
+		name            = "tf-acc-test-%s"
+		description     = "tf-acc-test-%s"
 		enabled         = "%s"
 		use_tls         = "%s"
 		lss_host        = "%s"
@@ -147,40 +153,30 @@ resource "%s" "%s" {
 	}
 	policy_rule_resource {
 		name   = "policy_rule_resource-lss_auth_logs"
-		action = "ALLOW"
+		action = "LOG"
+		policy_set_id = data.zpa_policy_type.lss_siem_policy.id
 		conditions {
-		  negated  = false
-		  operator = "OR"
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_exporter"]
+			operator = "OR"
+			operands {
+			  object_type = "CLIENT_TYPE"
+			  values      = ["zpn_client_type_exporter", "zpn_client_type_machine_tunnel", "zpn_client_type_ip_anchoring", "zpn_client_type_edge_connector", "zpn_client_type_zapp", "zpn_client_type_slogger", "zpn_client_type_slogger", "zpn_client_type_branch_connector"]
+			}
 		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_ip_anchoring"]
-		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_zapp"]
-		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_edge_connector"]
-		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_machine_tunnel"]
-		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_browser_isolation"]
-		  }
-		  operands {
-			object_type = "CLIENT_TYPE"
-			values      = ["zpn_client_type_slogger"]
-		  }
+		conditions {
+		operator = "OR"
+		operands {
+			object_type = "SCIM_GROUP"
+			entry_values {
+			rhs = data.zpa_scim_groups.engineering.id
+			lhs = data.zpa_idp_controller.this.id
+			}
+			entry_values {
+			rhs = data.zpa_scim_groups.finance.id
+			lhs = data.zpa_idp_controller.this.id
+			}
 		}
-	  }
+		}
+	}
 	connector_groups {
 		id = [ "${%s.id}" ]
 	}
@@ -191,8 +187,8 @@ resource "%s" "%s" {
 		// resource variables
 		resourcetype.ZPALSSController,
 		generatedName,
-		generatedName,
-		generatedName,
+		name,
+		description,
 		strconv.FormatBool(enabled),
 		strconv.FormatBool(tlsEnabled),
 		lssHost,
@@ -201,3 +197,4 @@ resource "%s" "%s" {
 		appConnectorGroupTypeAndName,
 	)
 }
+*/

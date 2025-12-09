@@ -1,21 +1,29 @@
 ---
+page_title: "zpa_provisioning_key Resource - terraform-provider-zpa"
 subcategory: "Provisioning Key"
-layout: "zscaler"
-page_title: "ZPA: provisioning_key"
 description: |-
+  Official documentation https://help.zscaler.com/zpa/about-connector-provisioning-keys
+  API documentation https://help.zscaler.com/zpa/configuring-provisioning-keys-using-api
   Creates and manages ZPA Provisioning Key for Service Edge and/or App Connector Groups.
 ---
 
-# Resource: zpa_provisioning_key
+# zpa_provisioning_key (Resource)
+
+* [Official documentation](https://help.zscaler.com/zpa/about-connector-provisioning-keys)
+* [API documentation](https://help.zscaler.com/zpa/configuring-provisioning-keys-using-api)
 
 The **zpa_provisioning_key** resource provides creates a provisioning key in the Zscaler Private Access portal. This resource can then be referenced in the following ZPA resources:
 
-1. App Connector Groups
-2. Service Edge Groups
+* App Connector Groups
+* Service Edge Groups
+
+## Zenith Community - ZPA Provisioning Keys
+
+[![ZPA Terraform provider Video Series Ep3 - Provisioning Keys](https://raw.githubusercontent.com/zscaler/terraform-provider-zpa/master/images/zpa_provisioning_key.svg)](https://community.zscaler.com/zenith/s/question/0D54u00009evlEnCAI/video-zpa-terraform-provider-video-series-ep3-provisioning-keys)
 
 ## App Connector Group Provisioning Key Example Usage
 
-```hcl
+```terraform
 # Retrieve the Connector Enrollment Certificate
 data "zpa_enrollment_cert" "connector" {
     name = "Connector"
@@ -51,7 +59,7 @@ resource "zpa_app_connector_group" "usa_connector_group" {
 
 ## Service Edge Provisioning KeyExample Usage
 
-```hcl
+```terraform
 # Create Provisioning Key for Service Edge Group
 resource "zpa_provisioning_key" "test_provisioning_key" {
   name                  = "test-provisioning-key"
@@ -79,17 +87,30 @@ resource "zpa_service_edge_group" "service_edge_group_nyc" {
 }
 ```
 
-## Argument Reference
+## Schema
+
+### Required
 
 The following arguments are supported:
 
-* `name` - (Required) Name of the provisioning key.
-* `max_usage` - (Required) The maximum number of instances where this provisioning key can be used for enrolling an App Connector or Service Edge.
-* `enrollment_cert_id` - (Required) ID of the enrollment certificate that can be used for this provisioning key. `ID` of the existing enrollment certificate that has the private key
-* `zcomponent_id` - (Required) ID of the existing App Connector or Service Edge Group.
-* `association_type` (Required) Specifies the provisioning key type for App Connectors or ZPA Private Service Edges. The supported values are `CONNECTOR_GRP` and `SERVICE_EDGE_GRP`
+* `name` - (String) Name of the provisioning key.
+* `max_usage` - (String) The maximum number of instances where this provisioning key can be used for enrolling an App Connector or Service Edge.
+* `enrollment_cert_id` - (String) ID of the enrollment certificate that can be used for this provisioning key. `ID` of the existing enrollment certificate that has the private key
+* `zcomponent_id` - (String) ID of the existing App Connector or Service Edge Group.
+* `association_type` (String) Specifies the provisioning key type for App Connectors or ZPA Private Service Edges. The supported values are `CONNECTOR_GRP` and `SERVICE_EDGE_GRP`
+
+### Optional
+
+In addition to all arguments above, the following attributes are exported:
+
+* `microtenant_id` (String) The ID of the microtenant the resource is to be associated with.
+
+⚠️ **WARNING:**: The attribute ``microtenant_id`` is optional and requires the microtenant license and feature flag enabled for the respective tenant. The provider also supports the microtenant ID configuration via the environment variable `ZPA_MICROTENANT_ID` which is the recommended method.
 
 ## Import
+
+Zscaler offers a dedicated tool called Zscaler-Terraformer to allow the automated import of ZPA configurations into Terraform-compliant HashiCorp Configuration Language.
+[Visit](https://github.com/zscaler/zscaler-terraformer)
 
 Provisioning key can be imported by using `<PROVISIONING KEY ID>` or `<PROVISIONING KEY NAME>` as the import ID.
 

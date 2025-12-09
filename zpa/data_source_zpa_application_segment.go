@@ -1,17 +1,27 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/applicationsegment"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/applicationsegment"
 )
 
 func dataSourceApplicationSegment() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceApplicationSegmentRead,
+		ReadContext: dataSourceApplicationSegmentRead,
 		Schema: map[string]*schema.Schema{
+			"id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"name": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 			"segment_group_id": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -69,13 +79,14 @@ func dataSourceApplicationSegment() *schema.Resource {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
-			"id": {
-				Type:     schema.TypeString,
-				Optional: true,
+			"use_in_dr_mode": {
+				Type:     schema.TypeBool,
+				Computed: true,
 			},
-			"name": {
-				Type:     schema.TypeString,
+			"is_incomplete_dr_config": {
+				Type:     schema.TypeBool,
 				Optional: true,
+				Computed: true,
 			},
 			"ip_anchored": {
 				Type:     schema.TypeBool,
@@ -97,49 +108,33 @@ func dataSourceApplicationSegment() *schema.Resource {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
-			"server_groups": {
-				Type:     schema.TypeList,
+			"api_protection_enabled": {
+				Type:     schema.TypeBool,
 				Computed: true,
+			},
+			"server_groups": {
+				Type:        schema.TypeSet,
+				Computed:    true,
+				Description: "List of the server group IDs.",
 				Elem: &schema.Resource{
 					Schema: map[string]*schema.Schema{
-						"config_space": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"creation_time": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"description": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"enabled": {
-							Type:     schema.TypeBool,
-							Computed: true,
-						},
 						"id": {
-							Type:     schema.TypeString,
+							Type:     schema.TypeList,
 							Computed: true,
-						},
-						"dynamic_discovery": {
-							Type:     schema.TypeBool,
-							Computed: true,
-						},
-						"modifiedby": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"modified_time": {
-							Type:     schema.TypeString,
-							Computed: true,
-						},
-						"name": {
-							Type:     schema.TypeString,
-							Computed: true,
+							Elem: &schema.Schema{
+								Type: schema.TypeString,
+							},
 						},
 					},
 				},
+			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
 			},
 			"tcp_port_ranges": {
 				Type:     schema.TypeList,
@@ -157,24 +152,31 @@ func dataSourceApplicationSegment() *schema.Resource {
 	}
 }
 
-func dataSourceApplicationSegmentRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceApplicationSegmentRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
 	var resp *applicationsegment.ApplicationSegmentResource
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
-		log.Printf("[INFO] Getting data for server group %s\n", id)
-		res, _, err := zClient.applicationsegment.Get(id)
+		log.Printf("[INFO] Getting data for application segment %s\n", id)
+		res, _, err := applicationsegment.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if id == "" && ok && name != "" {
-		log.Printf("[INFO] Getting data for server group name %s\n", name)
-		res, _, err := zClient.applicationsegment.GetByName(name)
+		log.Printf("[INFO] Getting data for application segment name %s\n", name)
+		res, _, err := applicationsegment.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -192,50 +194,40 @@ func dataSourceApplicationSegmentRead(d *schema.ResourceData, m interface{}) err
 		_ = d.Set("health_check_type", resp.HealthCheckType)
 		_ = d.Set("health_reporting", resp.HealthReporting)
 		_ = d.Set("select_connector_close_to_app", resp.SelectConnectorCloseToApp)
+		_ = d.Set("use_in_dr_mode", resp.UseInDrMode)
+		_ = d.Set("is_incomplete_dr_config", resp.IsIncompleteDRConfig)
 		_ = d.Set("ip_anchored", resp.IpAnchored)
 		_ = d.Set("is_cname_enabled", resp.IsCnameEnabled)
 		_ = d.Set("modifiedby", resp.ModifiedBy)
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
 		_ = d.Set("passive_health_enabled", resp.PassiveHealthEnabled)
-		_ = d.Set("tcp_port_ranges", convertPortsToListString(resp.TCPAppPortRange))
-		_ = d.Set("udp_port_ranges", convertPortsToListString(resp.UDPAppPortRange))
+		_ = d.Set("microtenant_id", resp.MicroTenantID)
+		_ = d.Set("microtenant_name", resp.MicroTenantName)
+		_ = d.Set("api_protection_enabled", resp.APIProtectionEnabled)
 
-		if err := d.Set("server_groups", flattenAppServerGroups(resp)); err != nil {
-			return fmt.Errorf("failed to read app server groups %s", err)
+		if err := d.Set("server_groups", flattenCommonAppServerGroups(resp.ServerGroups)); err != nil {
+			return diag.FromErr(fmt.Errorf("failed to read app server groups %s", err))
+		}
+
+		if err := d.Set("tcp_port_ranges", resp.TCPPortRanges); err != nil {
+			return diag.FromErr(err)
+		}
+		if err := d.Set("udp_port_ranges", resp.UDPPortRanges); err != nil {
+			return diag.FromErr(err)
 		}
 
 		if err := d.Set("tcp_port_range", flattenNetworkPorts(resp.TCPAppPortRange)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
 		if err := d.Set("udp_port_range", flattenNetworkPorts(resp.UDPAppPortRange)); err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 
 	} else {
-		return fmt.Errorf("couldn't find any application segment with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any application segment with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
-
-}
-
-func flattenAppServerGroups(serverGroup *applicationsegment.ApplicationSegmentResource) []interface{} {
-	serverGroups := make([]interface{}, len(serverGroup.ServerGroups))
-	for i, val := range serverGroup.ServerGroups {
-		serverGroups[i] = map[string]interface{}{
-			"name":              val.Name,
-			"id":                val.ID,
-			"config_space":      val.ConfigSpace,
-			"creation_time":     val.CreationTime,
-			"description":       val.Description,
-			"enabled":           val.Enabled,
-			"dynamic_discovery": val.DynamicDiscovery,
-			"modifiedby":        val.ModifiedBy,
-			"modified_time":     val.ModifiedTime,
-		}
-	}
-
-	return serverGroups
 }

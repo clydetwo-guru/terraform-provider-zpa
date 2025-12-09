@@ -1,21 +1,26 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/serviceedgegroup"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/serviceedgegroup"
 )
 
-func TestAccResourceServiceEdgeGroupBasic(t *testing.T) {
+func TestAccResourceServiceEdgeGroup_Basic(t *testing.T) {
 	var groups serviceedgegroup.ServiceEdgeGroup
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAServiceEdgeGroup)
+
+	initialName := "tf-acc-test-" + generatedName
+	updatedName := "tf-updated-" + generatedName
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -23,24 +28,40 @@ func TestAccResourceServiceEdgeGroupBasic(t *testing.T) {
 		CheckDestroy: testAccCheckServiceEdgeGroupDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCheckServiceEdgeGroupConfigure(resourceTypeAndName, generatedName, variable.ServiceEdgeDescription, variable.ServiceEdgeEnabled),
+				Config: testAccCheckServiceEdgeGroupConfigure(resourceTypeAndName, initialName, variable.ServiceEdgeDescription, variable.ServiceEdgeEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckServiceEdgeGroupExists(resourceTypeAndName, &groups),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", initialName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.ServiceEdgeDescription),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.ServiceEdgeEnabled)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "is_public", strconv.FormatBool(variable.ServiceEdgeIsPublic)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "latitude", variable.ServiceEdgeLatitude),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "longitude", variable.ServiceEdgeLongitude),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "location", variable.ServiceEdgeLocation),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "version_profile_name", variable.ServiceEdgeVersionProfileName),
 				),
 			},
 
 			// Update test
 			{
-				Config: testAccCheckServiceEdgeGroupConfigure(resourceTypeAndName, generatedName, variable.ServiceEdgeDescription, variable.ServiceEdgeEnabled),
+				Config: testAccCheckServiceEdgeGroupConfigure(resourceTypeAndName, updatedName, variable.ServiceEdgeDescription, variable.ServiceEdgeEnabled),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckServiceEdgeGroupExists(resourceTypeAndName, &groups),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", generatedName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.ServiceEdgeDescription),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "enabled", strconv.FormatBool(variable.ServiceEdgeEnabled)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "is_public", strconv.FormatBool(variable.ServiceEdgeIsPublic)),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "latitude", variable.ServiceEdgeLatitude),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "longitude", variable.ServiceEdgeLongitude),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "location", variable.ServiceEdgeLocation),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "version_profile_name", variable.ServiceEdgeVersionProfileName),
 				),
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -54,7 +75,13 @@ func testAccCheckServiceEdgeGroupDestroy(s *terraform.State) error {
 			continue
 		}
 
-		group, _, err := apiClient.serviceedgegroup.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		group, _, err := serviceedgegroup.Get(context.Background(), service, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -79,8 +106,13 @@ func testAccCheckServiceEdgeGroupExists(resource string, group *serviceedgegroup
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		receivedGroup, _, err := apiClient.serviceedgegroup.Get(rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
 
+		receivedGroup, _, err := serviceedgegroup.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -91,44 +123,46 @@ func testAccCheckServiceEdgeGroupExists(resource string, group *serviceedgegroup
 }
 
 func testAccCheckServiceEdgeGroupConfigure(resourceTypeAndName, generatedName, description string, enabled bool) string {
-	return fmt.Sprintf(`
-// service edge group resource
-%s
+	resourceName := strings.Split(resourceTypeAndName, ".")[1] // Extract the resource name
 
-data "%s" "%s" {
-  id = "${%s.id}"
-}
-`,
-		// resource variables
-		ServiceEdgeGroupResourceHCL(generatedName, description, enabled),
-
-		// data source variables
-		resourcetype.ZPAServiceEdgeGroup,
-		generatedName,
-		resourceTypeAndName,
-	)
-}
-
-func ServiceEdgeGroupResourceHCL(generatedName, description string, enabled bool) string {
 	return fmt.Sprintf(`
 resource "%s" "%s" {
-	name                 = "%s"
-	description          = "%s"
-	enabled				 = "%s"
-	upgrade_day          = "SUNDAY"
-	upgrade_time_in_secs = "66600"
-	latitude             = "37.3382082"
-	longitude            = "-121.8863286"
-	location             = "San Jose, CA, USA"
-	version_profile_id   = "0"
+	name                      = "%s"
+	description               = "%s"
+	enabled				      = "%s"
+	is_public			      = "%s"
+	upgrade_day               = "SUNDAY"
+	upgrade_time_in_secs      = "66600"
+	country_code              = "US"
+	city_country              = "San Jose, US"
+	latitude                  = "37.33874"
+	longitude                 = "-121.8852525"
+	location                  = "San Jose, CA, USA"
+	version_profile_id        = 0
+	grace_distance_enabled    = true
+	grace_distance_value      = "10"
+	grace_distance_value_unit = "KMS"
+
+}
+
+data "%s" "%s" {
+  id = "${%s.%s.id}"
 }
 `,
+		// Resource type and name for the certificate
 		// resource variables
 		resourcetype.ZPAServiceEdgeGroup,
+		resourceName,
 		generatedName,
-		generatedName,
-		// variable.ServiceEdgeResourceName,
 		description,
 		strconv.FormatBool(enabled),
+		strconv.FormatBool(enabled),
+
+		// Data source type and name
+		resourcetype.ZPAServiceEdgeGroup,
+		resourceName,
+
+		// Reference to the resource
+		resourcetype.ZPAServiceEdgeGroup, resourceName,
 	)
 }

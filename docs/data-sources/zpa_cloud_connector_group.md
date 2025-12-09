@@ -1,44 +1,52 @@
 ---
+page_title: "zpa_cloud_connector_group Data Source - terraform-provider-zpa"
 subcategory: "Cloud Connector Group"
-layout: "zscaler"
-page_title: "ZPA: cloud_connector_group"
 description: |-
+  Official documentation https://help.zscaler.com/zpa/about-web-server-certificates
+  API documentation https://help.zscaler.com/zpa/obtaining-cloud-connector-group-details-using-api
   Get information about ZPA Cloud Connector Group in Zscaler Private Access cloud.
 ---
 
-# Data Source: zpa_cloud_connector_group
+# zpa_cloud_connector_group (Data Source)
+
+* [Official documentation](https://help.zscaler.com/zpa/about-web-server-certificates)
+* [API documentation](https://help.zscaler.com/zpa/obtaining-cloud-connector-group-details-using-api)
 
 Use the **zpa_cloud_connector_group** data source to get information about a cloud connector group created from the Zscaler Private Access cloud. This data source can then be referenced within an Access Policy rule
 
-~> **NOTE:** A Cloud Connector Group resource is created in the Zscaler Cloud Connector cloud and replicated to the ZPA cloud. This resource can then be referenced in a Access Policy Rule where the Object Type = `CLOUD_CONNECTOR_GROUP` is being used.
+~> **NOTE:** A Cloud Connector Group resource is created in the Zscaler Cloud Connector cloud and replicated to the ZPA cloud. This resource can then be referenced in a Access Policy Rule where the Object Type = `EDGE_CONNECTOR_GROUP` is being used.
+
+**NOTE:** To ensure consistent search results across data sources, please avoid using multiple spaces or special characters in your search queries.
 
 ## Example Usage
 
-```hcl
+```terraform
 # ZPA Cloud Connector Group Data Source
 data "zpa_cloud_connector_group" "foo" {
   name = "AWS-Cloud"
 }
 ```
 
-```hcl
+```terraform
 # ZPA Cloud Connector Group Data Source
 data "zpa_cloud_connector_group" "foo" {
   id = "1234567890"
 }
 ```
 
-## Argument Reference
+## Schema
+
+### Required
 
 The following arguments are supported:
 
-* `name` - (Required) This field defines the name of the cloud connector group.
-* `id` - (Optional) This field defines the id of the cloud connector group.
+* `name` - (String) This field defines the name of the cloud connector group.
 
-## Attribute Reference
+### Read-Only
 
 In addition to all arguments above, the following attributes are exported:
 
+* `id` - (string) This field defines the id of the cloud connector group.
 * `description` (string) - This field defines the description of the cloud connector group.
 * `enabled` (bool) - This field defines the status of the cloud connector group.
 * `creation_time` (string) - Only applicable for a GET request. Ignored in PUT/POST/DELETE requests.
@@ -59,3 +67,5 @@ In addition to all arguments above, the following attributes are exported:
   * `modified_time`(string)- Only applicable for a GET request. Ignored in PUT/POST/DELETE requests.
   * `name` (string) - This field defines the name of the cloud connector group.
   * `enrollment_cert` (string) - This field defines the name of the cloud connector group.
+* `microtenant_id` (string) The ID of the microtenant the resource is to be associated with.
+* `microtenant_name` (string) The name of the microtenant the resource is to be associated with.

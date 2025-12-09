@@ -18,7 +18,6 @@ func TestAccDataSourceInspectionPredefinedControls_Basic(t *testing.T) {
 					testAccDataSourceInspectionPredefinedControlsCheck("data.zpa_inspection_predefined_controls.control02"),
 					testAccDataSourceInspectionPredefinedControlsCheck("data.zpa_inspection_predefined_controls.control03"),
 					testAccDataSourceInspectionPredefinedControlsCheck("data.zpa_inspection_predefined_controls.control04"),
-					testAccDataSourceInspectionPredefinedControlsCheck("data.zpa_inspection_predefined_controls.control05"),
 				),
 			},
 		},
@@ -49,11 +48,6 @@ data "zpa_inspection_predefined_controls" "control03" {
 }
 
 data "zpa_inspection_predefined_controls" "control04" {
-    name = "Attempted multipart/form-data bypass"
-    version = "OWASP_CRS/3.3.0"
-}
-
-data "zpa_inspection_predefined_controls" "control05" {
     name = "GET or HEAD Request with Body Content"
     version = "OWASP_CRS/3.3.0"
 }

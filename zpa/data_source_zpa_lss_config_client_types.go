@@ -1,16 +1,17 @@
 package zpa
 
 import (
+	"context"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/lssconfigcontroller"
 )
 
 func dataSourceLSSClientTypes() *schema.Resource {
 	return &schema.Resource{
-		Read:     dataSourceLSSClientTypesRead,
-		Importer: &schema.ResourceImporter{},
-
+		ReadContext: dataSourceLSSClientTypesRead,
 		Schema: map[string]*schema.Schema{
 			"zpn_client_type_exporter": {
 				Type:     schema.TypeString,
@@ -40,13 +41,12 @@ func dataSourceLSSClientTypes() *schema.Resource {
 	}
 }
 
-func dataSourceLSSClientTypesRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
-	log.Printf("[INFO] Getting data for global policy set\n")
-
-	resp, _, err := zClient.lssconfigcontroller.GetClientTypes()
+func dataSourceLSSClientTypesRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	resp, _, err := lssconfigcontroller.GetClientTypes(ctx, service)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	log.Printf("[INFO] Getting Policy Set Global Rules:\n%+v\n", resp)

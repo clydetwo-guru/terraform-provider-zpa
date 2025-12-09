@@ -1,27 +1,30 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
-func TestAccPolicyAccessRuleBasic(t *testing.T) {
+func TestAccResourcePolicyAccessRule_Basic(t *testing.T) {
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAPolicyAccessRule)
 	rName := acctest.RandomWithPrefix("tf-acc-test")
-	randDesc := acctest.RandString(20)
+	updatedRName := acctest.RandomWithPrefix("tf-updated") // New name for update test
+	randDesc := acctest.RandString(10)
 
 	appConnectorGroupTypeAndName, _, appConnectorGroupGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAAppConnectorGroup)
-	appConnectorGroupHCL := testAccCheckAppConnectorGroupConfigure(appConnectorGroupTypeAndName, appConnectorGroupGeneratedName, variable.AppConnectorDescription, variable.AppConnectorEnabled)
+	appConnectorGroupHCL := testAccCheckAppConnectorGroupConfigure(appConnectorGroupTypeAndName, "tf-acc-test-"+appConnectorGroupGeneratedName, variable.AppConnectorDescription, variable.AppConnectorEnabled)
 
 	segmentGroupTypeAndName, _, segmentGroupGeneratedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPASegmentGroup)
-	segmentGroupHCL := testAccCheckSegmentGroupConfigure(segmentGroupTypeAndName, segmentGroupGeneratedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled)
+	segmentGroupHCL := testAccCheckSegmentGroupConfigure(segmentGroupTypeAndName, "tf-acc-test-"+segmentGroupGeneratedName, variable.SegmentGroupDescription, variable.SegmentGroupEnabled)
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:     func() { testAccPreCheck(t) },
@@ -37,22 +40,28 @@ func TestAccPolicyAccessRuleBasic(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceTypeAndName, "action", "ALLOW"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "app_connector_groups.#", "1"),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "1"),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "3"),
 				),
 			},
 
 			// Update test
 			{
-				Config: testAccCheckPolicyAccessRuleConfigure(resourceTypeAndName, generatedName, rName, randDesc, appConnectorGroupHCL, appConnectorGroupTypeAndName, segmentGroupHCL, segmentGroupTypeAndName),
+				Config: testAccCheckPolicyAccessRuleConfigure(resourceTypeAndName, generatedName, updatedRName, randDesc, appConnectorGroupHCL, appConnectorGroupTypeAndName, segmentGroupHCL, segmentGroupTypeAndName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckPolicyAccessRuleExists(resourceTypeAndName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", rName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedRName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", randDesc),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "action", "ALLOW"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "app_connector_groups.#", "1"),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "1"),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "3"),
 				),
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -60,7 +69,7 @@ func TestAccPolicyAccessRuleBasic(t *testing.T) {
 
 func testAccCheckPolicyAccessRuleDestroy(s *terraform.State) error {
 	apiClient := testAccProvider.Meta().(*Client)
-	accessPolicy, _, err := apiClient.policysetcontroller.GetByPolicyType("ACCESS_POLICY")
+	accessPolicy, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "ACCESS_POLICY")
 	if err != nil {
 		return fmt.Errorf("failed fetching resource ACCESS_POLICY. Recevied error: %s", err)
 	}
@@ -69,7 +78,13 @@ func testAccCheckPolicyAccessRuleDestroy(s *terraform.State) error {
 			continue
 		}
 
-		rule, _, err := apiClient.policysetcontroller.GetPolicyRule(accessPolicy.ID, rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		rule, _, err := policysetcontroller.GetPolicyRule(context.Background(), service, accessPolicy.ID, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -94,11 +109,17 @@ func testAccCheckPolicyAccessRuleExists(resource string) resource.TestCheckFunc 
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		resp, _, err := apiClient.policysetcontroller.GetByPolicyType("ACCESS_POLICY")
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		resp, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "ACCESS_POLICY")
 		if err != nil {
 			return fmt.Errorf("failed fetching resource ACCESS_POLICY. Recevied error: %s", err)
 		}
-		_, _, err = apiClient.policysetcontroller.GetPolicyRule(resp.ID, rs.Primary.ID)
+		_, _, err = policysetcontroller.GetPolicyRule(context.Background(), service, resp.ID, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -137,59 +158,56 @@ data "%s" "%s" {
 func getPolicyAccessRuleHCL(rName, generatedName, desc, appConnectorGroupTypeAndName, segmentGroupTypeAndName string) string {
 	return fmt.Sprintf(`
 
-data "zpa_policy_type" "access_policy" {
-	policy_type = "ACCESS_POLICY"
-}
-
-data "zpa_scim_attribute_header" "givenName" {
-    name = "name.givenName"
-    idp_name = "BD_Okta_Users"
-}
-
-data "zpa_scim_attribute_header" "familyName" {
-    name = "name.familyName"
-    idp_name = "BD_Okta_Users"
-}
-
-data "zpa_scim_attribute_header" "username" {
-    name = "userName"
-    idp_name = "BD_Okta_Users"
-}
-
 resource "%s" "%s" {
 	name          		= "%s"
 	description   		= "%s"
 	action        		= "ALLOW"
 	operator      		= "AND"
-	policy_set_id 		= data.zpa_policy_type.access_policy.id
 	app_connector_groups {
 		id = ["${%s.id}"]
 	}
 	conditions {
-		negated  = false
 		operator = "OR"
 		operands {
 		  object_type = "APP_GROUP"
 		  lhs         = "id"
 		  rhs         = "${%s.id}"
 		}
+	}
+	conditions {
+		operator = "OR"
 		operands {
-			object_type = "SCIM"
-			lhs =  data.zpa_scim_attribute_header.givenName.id
-			rhs = "William"
-			idp_id = data.zpa_scim_attribute_header.givenName.idp_id
-		  }
-		  operands {
-			object_type = "SCIM"
-			lhs =  data.zpa_scim_attribute_header.familyName.id
-			rhs = "Guilherme"
-			idp_id = data.zpa_scim_attribute_header.familyName.idp_id
-		  }
-		  operands {
-			object_type = "SCIM"
-			lhs =  data.zpa_scim_attribute_header.username.id
-			rhs = "charles.keenan@bd-hashicorp.com"
-			idp_id = data.zpa_scim_attribute_header.username.idp_id
+		  object_type = "RISK_FACTOR_TYPE"
+		  lhs         = "ZIA"
+		  rhs         = "UNKNOWN"
+		}
+		operands {
+		  object_type = "RISK_FACTOR_TYPE"
+		  lhs         = "ZIA"
+		  rhs         = "LOW"
+		}
+		operands {
+		  object_type = "RISK_FACTOR_TYPE"
+		  lhs         = "ZIA"
+		  rhs         = "MEDIUM"
+		}
+		operands {
+		  object_type = "RISK_FACTOR_TYPE"
+		  lhs         = "ZIA"
+		  rhs         = "HIGH"
+		}
+		operands {
+		  object_type = "RISK_FACTOR_TYPE"
+		  lhs         = "ZIA"
+		  rhs         = "CRITICAL"
+		}
+	}
+	conditions {
+		operator = "OR"
+		operands {
+			object_type = "CHROME_ENTERPRISE"
+			lhs = "managed"
+			rhs = "true"
 		}
 	}
 	depends_on = [ %s, %s ]

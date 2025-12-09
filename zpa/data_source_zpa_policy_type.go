@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/policysetcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
 func dataSourcePolicyType() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourcePolicyTypeRead,
+		ReadContext: dataSourcePolicyTypeRead,
 		Schema: map[string]*schema.Schema{
 			"creation_time": {
 				Type:     schema.TypeString,
@@ -44,6 +46,14 @@ func dataSourcePolicyType() *schema.Resource {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 			"policy_type": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -53,7 +63,8 @@ func dataSourcePolicyType() *schema.Resource {
 					"TIMEOUT_POLICY", "REAUTH_POLICY",
 					"CLIENT_FORWARDING_POLICY", "BYPASS_POLICY",
 					"ISOLATION_POLICY", "INSPECTION_POLICY",
-					"SIEM_POLICY",
+					"SIEM_POLICY", "CREDENTIAL_POLICY", "CAPABILITIES_POLICY",
+					"REDIRECTION_POLICY",
 				}, false),
 			},
 			"rules": {
@@ -166,10 +177,6 @@ func dataSourcePolicyType() *schema.Resource {
 										Type:     schema.TypeString,
 										Computed: true,
 									},
-									"negated": {
-										Type:     schema.TypeBool,
-										Computed: true,
-									},
 									"operator": {
 										Type:     schema.TypeString,
 										Computed: true,
@@ -232,19 +239,25 @@ func dataSourcePolicyType() *schema.Resource {
 	}
 }
 
-func dataSourcePolicyTypeRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourcePolicyTypeRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
 	log.Printf("[INFO] Getting data for policy type\n")
 	var resp *policysetcontroller.PolicySet
 	var err error
 	policyType, policyTypeIsSet := d.GetOk("policy_type")
 	if policyTypeIsSet {
-		resp, _, err = zClient.policysetcontroller.GetByPolicyType(policyType.(string))
+		resp, _, err = policysetcontroller.GetByPolicyType(ctx, service, policyType.(string))
 	} else {
-		resp, _, err = zClient.policysetcontroller.GetByPolicyType("GLOBAL_POLICY")
+		resp, _, err = policysetcontroller.GetByPolicyType(ctx, service, "GLOBAL_POLICY")
 	}
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	log.Printf("[INFO] Getting data for Policy Type:\n%+v\n", resp)
@@ -257,9 +270,11 @@ func dataSourcePolicyTypeRead(d *schema.ResourceData, m interface{}) error {
 	_ = d.Set("name", resp.Name)
 	_ = d.Set("sorted", resp.Sorted)
 	_ = d.Set("policy_type", resp.PolicyType)
+	_ = d.Set("microtenant_id", resp.MicroTenantID)
+	_ = d.Set("microtenant_name", resp.MicroTenantName)
 
 	if err := d.Set("rules", flattenPolicySetRules(resp)); err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	return nil
@@ -269,26 +284,28 @@ func flattenPolicySetRules(policySetRules *policysetcontroller.PolicySet) []inte
 	ruleItems := make([]interface{}, len(policySetRules.Rules))
 	for i, ruleItem := range policySetRules.Rules {
 		ruleItems[i] = map[string]interface{}{
-			"action":                    ruleItem.Action,
-			"action_id":                 ruleItem.ActionID,
-			"creation_time":             ruleItem.CreationTime,
-			"custom_msg":                ruleItem.CustomMsg,
-			"description":               ruleItem.Description,
-			"id":                        ruleItem.ID,
-			"isolation_default_rule":    ruleItem.IsolationDefaultRule,
-			"modified_by":               ruleItem.ModifiedBy,
-			"modified_time":             ruleItem.ModifiedTime,
-			"operator":                  ruleItem.Operator,
-			"policy_set_id":             ruleItem.PolicySetID,
-			"policy_type":               ruleItem.PolicyType,
-			"priority":                  ruleItem.Priority,
-			"reauth_default_rule":       ruleItem.ReauthDefaultRule,
-			"reauth_idle_timeout":       ruleItem.ReauthIdleTimeout,
-			"reauth_timeout":            ruleItem.ReauthTimeout,
-			"rule_order":                ruleItem.RuleOrder,
-			"zpn_cbi_profile_id":        ruleItem.ZpnCbiProfileID,
-			"zpn_inspection_profile_id": ruleItem.ZpnInspectionProfileID,
-			"conditions":                flattenRuleConditions(ruleItem),
+			"action":                      ruleItem.Action,
+			"action_id":                   ruleItem.ActionID,
+			"creation_time":               ruleItem.CreationTime,
+			"custom_msg":                  ruleItem.CustomMsg,
+			"description":                 ruleItem.Description,
+			"id":                          ruleItem.ID,
+			"modified_by":                 ruleItem.ModifiedBy,
+			"modified_time":               ruleItem.ModifiedTime,
+			"operator":                    ruleItem.Operator,
+			"policy_set_id":               ruleItem.PolicySetID,
+			"policy_type":                 ruleItem.PolicyType,
+			"priority":                    ruleItem.Priority,
+			"reauth_default_rule":         ruleItem.ReauthDefaultRule,
+			"reauth_idle_timeout":         ruleItem.ReauthIdleTimeout,
+			"reauth_timeout":              ruleItem.ReauthTimeout,
+			"rule_order":                  ruleItem.RuleOrder,
+			"microtenant_id":              ruleItem.MicroTenantID,
+			"microtenant_name":            ruleItem.MicroTenantName,
+			"zpn_isolation_profile_id":    ruleItem.ZpnIsolationProfileID,
+			"zpn_inspection_profile_id":   ruleItem.ZpnInspectionProfileID,
+			"zpn_inspection_profile_name": ruleItem.ZpnInspectionProfileName,
+			"conditions":                  flattenRuleConditions(ruleItem),
 		}
 	}
 
@@ -299,13 +316,13 @@ func flattenRuleConditions(conditions policysetcontroller.PolicyRule) []interfac
 	ruleConditions := make([]interface{}, len(conditions.Conditions))
 	for i, ruleCondition := range conditions.Conditions {
 		ruleConditions[i] = map[string]interface{}{
-			"creation_time": ruleCondition.CreationTime,
-			"id":            ruleCondition.ID,
-			"modified_by":   ruleCondition.ModifiedBy,
-			"modified_time": ruleCondition.ModifiedTime,
-			"negated":       ruleCondition.Negated,
-			"operator":      ruleCondition.Operator,
-			"operands":      flattenConditionOperands(ruleCondition),
+			"creation_time":  ruleCondition.CreationTime,
+			"id":             ruleCondition.ID,
+			"modified_by":    ruleCondition.ModifiedBy,
+			"modified_time":  ruleCondition.ModifiedTime,
+			"operator":       ruleCondition.Operator,
+			"microtenant_id": ruleCondition.MicroTenantID,
+			"operands":       flattenConditionOperands(ruleCondition),
 		}
 	}
 
@@ -316,15 +333,16 @@ func flattenConditionOperands(operands policysetcontroller.Conditions) []interfa
 	conditionOperands := make([]interface{}, len(operands.Operands))
 	for i, conditionOperand := range operands.Operands {
 		conditionOperands[i] = map[string]interface{}{
-			"creation_time": conditionOperand.CreationTime,
-			"id":            conditionOperand.ID,
-			"idp_id":        conditionOperand.IdpID,
-			"lhs":           conditionOperand.LHS,
-			"modified_by":   conditionOperand.ModifiedBy,
-			"modified_time": conditionOperand.ModifiedTime,
-			"name":          conditionOperand.Name,
-			"object_type":   conditionOperand.ObjectType,
-			"rhs":           conditionOperand.RHS,
+			"creation_time":  conditionOperand.CreationTime,
+			"id":             conditionOperand.ID,
+			"idp_id":         conditionOperand.IdpID,
+			"lhs":            conditionOperand.LHS,
+			"modified_by":    conditionOperand.ModifiedBy,
+			"modified_time":  conditionOperand.ModifiedTime,
+			"name":           conditionOperand.Name,
+			"object_type":    conditionOperand.ObjectType,
+			"rhs":            conditionOperand.RHS,
+			"microtenant_id": conditionOperand.MicroTenantID,
 		}
 	}
 

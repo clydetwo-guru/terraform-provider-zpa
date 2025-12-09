@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/idpcontroller"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/idpcontroller"
 )
 
 func dataSourceIdpController() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceIdpControllerRead,
+		ReadContext: dataSourceIdpControllerRead,
 		Schema: map[string]*schema.Schema{
 			"admin_metadata": {
 				Type:     schema.TypeList,
@@ -96,6 +98,18 @@ func dataSourceIdpController() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"login_hint": {
+				Type:     schema.TypeBool,
+				Computed: true,
+			},
+			"force_auth": {
+				Type:     schema.TypeBool,
+				Computed: true,
+			},
+			"enable_arbitrary_auth_domains": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
 			"modifiedby": {
 				Type:     schema.TypeString,
 				Computed: true,
@@ -173,26 +187,25 @@ func dataSourceIdpController() *schema.Resource {
 	}
 }
 
-func dataSourceIdpControllerRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
-
+func dataSourceIdpControllerRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
 	var resp *idpcontroller.IdpController
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for idp controller %s\n", id)
-		res, _, err := zClient.idpcontroller.Get(id)
+		res, _, err := idpcontroller.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
-
 	}
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for idp controller name %s\n", name)
-		res, _, err := zClient.idpcontroller.GetByName(name)
+		res, _, err := idpcontroller.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -200,7 +213,6 @@ func dataSourceIdpControllerRead(d *schema.ResourceData, m interface{}) error {
 		d.SetId(resp.ID)
 		_ = d.Set("admin_sp_signing_cert_id", resp.AdminSpSigningCertID)
 		_ = d.Set("auto_provision", resp.AutoProvision)
-		_ = d.Set("creation_time", resp.CreationTime)
 		_ = d.Set("description", resp.Description)
 		_ = d.Set("disable_saml_based_policy", resp.DisableSamlBasedPolicy)
 		_ = d.Set("domain_list", resp.Domainlist)
@@ -209,8 +221,10 @@ func dataSourceIdpControllerRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("idp_entity_id", resp.IdpEntityID)
 		_ = d.Set("login_name_attribute", resp.LoginNameAttribute)
 		_ = d.Set("login_url", resp.LoginURL)
+		_ = d.Set("login_hint", resp.LoginHint)
+		_ = d.Set("force_auth", resp.ForceAuth)
+		_ = d.Set("enable_arbitrary_auth_domains", resp.EnableArbitraryAuthDomains)
 		_ = d.Set("modifiedby", resp.ModifiedBy)
-		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
 		_ = d.Set("reauth_on_user_update", resp.ReauthOnUserUpdate)
 		_ = d.Set("redirect_binding", resp.RedirectBinding)
@@ -228,13 +242,31 @@ func dataSourceIdpControllerRead(d *schema.ResourceData, m interface{}) error {
 			_ = d.Set("admin_metadata", flattenAdminMeta(resp.AdminMetadata))
 		}
 
+		// Set epoch attributes explicitly
+		creationTime, err := epochToRFC1123(resp.CreationTime, false)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("error formatting creation_time: %s", err))
+		}
+		if err := d.Set("creation_time", creationTime); err != nil {
+			return diag.FromErr(fmt.Errorf("error setting creation_time: %s", err))
+		}
+
+		modifiedTime, err := epochToRFC1123(resp.ModifiedTime, false)
+		if err != nil {
+			return diag.FromErr(fmt.Errorf("error formatting modified_time: %s", err))
+		}
+		if err := d.Set("modified_time", modifiedTime); err != nil {
+			return diag.FromErr(fmt.Errorf("error setting modified_time: %s", err))
+		}
 	} else {
-		return fmt.Errorf("couldn't find any idp controller with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any idp controller with name '%s' or id '%s'", name, id))
 	}
 	return nil
 }
+
 func flattenAdminMeta(metaData *idpcontroller.AdminMetadata) []map[string]interface{} {
 	result := make([]map[string]interface{}, 1)
+	result[0] = make(map[string]interface{})
 	result[0]["certificate_url"] = metaData.CertificateURL
 	result[0]["sp_base_url"] = metaData.SpBaseURL
 	result[0]["sp_entity_id"] = metaData.SpEntityID
@@ -245,6 +277,7 @@ func flattenAdminMeta(metaData *idpcontroller.AdminMetadata) []map[string]interf
 
 func flattenUserMeta(metaData *idpcontroller.UserMetadata) []map[string]interface{} {
 	result := make([]map[string]interface{}, 1)
+	result[0] = make(map[string]interface{})
 	result[0]["certificate_url"] = metaData.CertificateURL
 	result[0]["sp_base_url"] = metaData.SpBaseURL
 	result[0]["sp_metadata_url"] = metaData.SpMetadataURL

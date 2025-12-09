@@ -1,17 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/lssconfigcontroller"
 )
 
 func dataSourceLSSStatusCodes() *schema.Resource {
 	return &schema.Resource{
-		Read:     dataSourceLSSStatusCodesRead,
-		Importer: &schema.ResourceImporter{},
-
+		ReadContext: dataSourceLSSStatusCodesRead,
 		Schema: map[string]*schema.Schema{
 			"zpn_auth_log": {
 				Type:     schema.TypeMap,
@@ -58,13 +59,16 @@ func toMapString(v map[string]interface{}) map[string]string {
 
 	return result
 }
-func dataSourceLSSStatusCodesRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+
+func dataSourceLSSStatusCodesRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
 	log.Printf("[INFO] Getting data for LSS Status Codes set\n")
 
-	resp, _, err := zClient.lssconfigcontroller.GetStatusCodes()
+	resp, _, err := lssconfigcontroller.GetStatusCodes(ctx, service)
 	if err != nil {
-		return err
+		return diag.FromErr(err)
 	}
 
 	log.Printf("[INFO] Getting LSS Status Codes:\n%+v\n", resp)

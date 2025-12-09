@@ -1,20 +1,19 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/provisioningkey"
-
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/provisioningkey"
 )
 
 func dataSourceProvisioningKey() *schema.Resource {
 	return &schema.Resource{
-		Read:     dataSourceProvisioningKeyRead,
-		Importer: &schema.ResourceImporter{},
-
+		ReadContext: dataSourceProvisioningKeyRead,
 		Schema: map[string]*schema.Schema{
 			"id": {
 				Type:     schema.TypeString,
@@ -102,35 +101,52 @@ func dataSourceProvisioningKey() *schema.Resource {
 					"CONNECTOR_GRP", "SERVICE_EDGE_GRP",
 				}, false),
 			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
 
-func dataSourceProvisioningKeyRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceProvisioningKeyRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
+
 	associationType, ok := getAssociationType(d)
 	if !ok {
-		return fmt.Errorf("associationType is required")
+		return diag.FromErr(fmt.Errorf("associationType is required"))
 	}
 	var resp *provisioningkey.ProvisioningKey
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data provisioning key %s\n", id)
-		res, _, err := zClient.provisioningkey.Get(associationType, id)
+		res, _, err := provisioningkey.Get(ctx, service, associationType, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err) // Wrap error using diag.FromErr
 		}
 		resp = res
 	}
+
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for provisioning key name %s\n", name)
-		res, _, err := zClient.provisioningkey.GetByName(associationType, name)
+		res, _, err := provisioningkey.GetByName(ctx, service, associationType, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err) // Wrap error using diag.FromErr
 		}
 		resp = res
 	}
+
 	if resp != nil {
 		d.SetId(resp.ID)
 		_ = d.Set("app_connector_group_id", resp.AppConnectorGroupID)
@@ -150,8 +166,10 @@ func dataSourceProvisioningKeyRead(d *schema.ResourceData, m interface{}) error 
 		_ = d.Set("usage_count", resp.UsageCount)
 		_ = d.Set("zcomponent_id", resp.ZcomponentID)
 		_ = d.Set("zcomponent_name", resp.ZcomponentName)
+		_ = d.Set("microtenant_id", resp.MicroTenantID)
+		_ = d.Set("microtenant_name", resp.MicroTenantName)
 	} else {
-		return fmt.Errorf("couldn't find any provisioning key with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any provisioning key with name '%s' or id '%s'", name, id))
 	}
 	return nil
 }

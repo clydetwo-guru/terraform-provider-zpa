@@ -1,18 +1,19 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/inspectioncontrol/inspection_custom_controls"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/variable"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/variable"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/inspectioncontrol/inspection_custom_controls"
 )
 
-func TestAccResourceInspectionCustomControlsBasic(t *testing.T) {
+func TestAccResourceInspectionCustomControls_Basic(t *testing.T) {
 	var control inspection_custom_controls.InspectionCustomControl
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAInspectionCustomControl)
 
@@ -22,36 +23,38 @@ func TestAccResourceInspectionCustomControlsBasic(t *testing.T) {
 		CheckDestroy: testAccCheckInspectionCustomControlsDestroy,
 		Steps: []resource.TestStep{
 			{
-				Config: testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName),
+				Config: testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName, variable.CustomControlDescription, variable.CustomControlSeverity, variable.CustomControlControlType),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckInspectionCustomControlsExists(resourceTypeAndName, &control),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "name", "tf-acc-test-"+generatedName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "description", "tf-acc-test-"+generatedName),
-					// resource.TestCheckResourceAttr(resourceTypeAndName, "action", variable.InspectionCustomControlAction),
-					// resource.TestCheckResourceAttr(resourceTypeAndName, "default_action", variable.InspectionCustomControlDefaultAction),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "paranoia_level", "1"),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "severity", variable.InspectionCustomControlSeverity),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "type", variable.InspectionCustomControlType),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.CustomControlDescription),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "default_action", variable.CustomControlDefaultAction),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "protocol_type", "HTTP"),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "severity", variable.CustomControlSeverity),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "type", variable.CustomControlControlType),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "rules.#", "2"),
 				),
-				ExpectNonEmptyPlan: true,
 			},
 
 			// Update test
 			{
-				Config: testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName),
+				Config: testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName, variable.CustomControlDescriptionUpdate, variable.CustomControlSeverityUpdate, variable.CustomControlControlType),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckInspectionCustomControlsExists(resourceTypeAndName, &control),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "name", "tf-acc-test-"+generatedName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "description", "tf-acc-test-"+generatedName),
-					// resource.TestCheckResourceAttr(resourceTypeAndName, "action", variable.InspectionCustomControlAction),
-					// resource.TestCheckResourceAttr(resourceTypeAndName, "default_action", variable.InspectionCustomControlDefaultAction),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "paranoia_level", "1"),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "severity", variable.InspectionCustomControlSeverity),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "type", variable.InspectionCustomControlType),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "description", variable.CustomControlDescriptionUpdate),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "default_action", variable.CustomControlDefaultAction),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "protocol_type", "HTTP"),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "severity", variable.CustomControlSeverityUpdate),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "type", variable.CustomControlControlType),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "rules.#", "2"),
 				),
-				ExpectNonEmptyPlan: true,
+			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
 			},
 		},
 	})
@@ -59,13 +62,14 @@ func TestAccResourceInspectionCustomControlsBasic(t *testing.T) {
 
 func testAccCheckInspectionCustomControlsDestroy(s *terraform.State) error {
 	apiClient := testAccProvider.Meta().(*Client)
+	service := apiClient.Service
 
 	for _, rs := range s.RootModule().Resources {
 		if rs.Type != resourcetype.ZPAInspectionCustomControl {
 			continue
 		}
 
-		rule, _, err := apiClient.inspection_custom_controls.Get(rs.Primary.ID)
+		rule, _, err := inspection_custom_controls.Get(context.Background(), service, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -90,8 +94,9 @@ func testAccCheckInspectionCustomControlsExists(resource string, rule *inspectio
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		receivedControl, _, err := apiClient.inspection_custom_controls.Get(rs.Primary.ID)
+		service := apiClient.Service
 
+		receivedControl, _, err := inspection_custom_controls.Get(context.Background(), service, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -101,7 +106,7 @@ func testAccCheckInspectionCustomControlsExists(resource string, rule *inspectio
 	}
 }
 
-func testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName string) string {
+func testAccCheckInspectionCustomControlsConfigure(resourceTypeAndName, generatedName, description, severity, controlType string) string {
 	return fmt.Sprintf(`
 // inspection custom control resource
 %s
@@ -111,7 +116,7 @@ data "%s" "%s" {
 }
 `,
 		// resource variables
-		getInspectionCustomControlsResourceHCL(generatedName),
+		getInspectionCustomControlsResourceHCL(generatedName, description, severity, controlType),
 
 		// data source variables
 		resourcetype.ZPAInspectionCustomControl,
@@ -120,15 +125,15 @@ data "%s" "%s" {
 	)
 }
 
-func getInspectionCustomControlsResourceHCL(generatedName string) string {
+func getInspectionCustomControlsResourceHCL(generatedName, description, severity, controlType string) string {
 	return fmt.Sprintf(`
 
 resource "%s" "%s" {
 	name           = "tf-acc-test-%s"
-	description    = "tf-acc-test-%s"
-	action         = "%s"
-	default_action = "%s"
+	description    = "%s"
+	default_action = "PASS"
 	paranoia_level = "1"
+	protocol_type  = "HTTP"
 	severity       = "%s"
 	type           = "%s"
 	rules {
@@ -154,11 +159,9 @@ resource "%s" "%s" {
 		resourcetype.ZPAInspectionCustomControl,
 		generatedName,
 		generatedName,
-		generatedName,
 
-		variable.InspectionCustomControlAction,
-		variable.InspectionCustomControlDefaultAction,
-		variable.InspectionCustomControlSeverity,
-		variable.InspectionCustomControlType,
+		description,
+		severity,
+		controlType,
 	)
 }

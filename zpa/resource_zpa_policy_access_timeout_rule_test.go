@@ -1,19 +1,22 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/resourcetype"
-	"github.com/zscaler/terraform-provider-zpa/zpa/common/testing/method"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/resourcetype"
+	"github.com/zscaler/terraform-provider-zpa/v4/zpa/common/testing/method"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/policysetcontroller"
 )
 
-func TestAccPolicyTimeoutRuleBasic(t *testing.T) {
+func TestAccResourcePolicyTimeoutRule_Basic(t *testing.T) {
 	resourceTypeAndName, _, generatedName := method.GenerateRandomSourcesTypeAndName(resourcetype.ZPAPolicyTimeOutRule)
 	rName := acctest.RandomWithPrefix("tf-acc-test")
+	updatedRName := acctest.RandomWithPrefix("tf-updated") // New name for update test
 	randDesc := acctest.RandString(20)
 
 	resource.Test(t, resource.TestCase{
@@ -37,10 +40,10 @@ func TestAccPolicyTimeoutRuleBasic(t *testing.T) {
 
 			// Update test
 			{
-				Config: testAccCheckPolicyTimeoutRuleConfigure(resourceTypeAndName, generatedName, rName, randDesc),
+				Config: testAccCheckPolicyTimeoutRuleConfigure(resourceTypeAndName, generatedName, updatedRName, randDesc),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckPolicyTimeoutRuleExists(resourceTypeAndName),
-					resource.TestCheckResourceAttr(resourceTypeAndName, "name", rName),
+					resource.TestCheckResourceAttr(resourceTypeAndName, "name", updatedRName),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "description", randDesc),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "action", "RE_AUTH"),
 					resource.TestCheckResourceAttr(resourceTypeAndName, "operator", "AND"),
@@ -49,13 +52,19 @@ func TestAccPolicyTimeoutRuleBasic(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceTypeAndName, "conditions.#", "1"),
 				),
 			},
+			// Import test
+			{
+				ResourceName:      resourceTypeAndName,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
 		},
 	})
 }
 
 func testAccCheckPolicyTimeoutRuleDestroy(s *terraform.State) error {
 	apiClient := testAccProvider.Meta().(*Client)
-	accessPolicy, _, err := apiClient.policysetcontroller.GetByPolicyType("TIMEOUT_POLICY")
+	accessPolicy, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "TIMEOUT_POLICY")
 	if err != nil {
 		return fmt.Errorf("failed fetching resource TIMEOUT_POLICY. Recevied error: %s", err)
 	}
@@ -64,7 +73,13 @@ func testAccCheckPolicyTimeoutRuleDestroy(s *terraform.State) error {
 			continue
 		}
 
-		rule, _, err := apiClient.policysetcontroller.GetPolicyRule(accessPolicy.ID, rs.Primary.ID)
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		rule, _, err := policysetcontroller.GetPolicyRule(context.Background(), service, accessPolicy.ID, rs.Primary.ID)
 
 		if err == nil {
 			return fmt.Errorf("id %s already exists", rs.Primary.ID)
@@ -89,11 +104,17 @@ func testAccCheckPolicyTimeoutRuleExists(resource string) resource.TestCheckFunc
 		}
 
 		apiClient := testAccProvider.Meta().(*Client)
-		resp, _, err := apiClient.policysetcontroller.GetByPolicyType("TIMEOUT_POLICY")
+		microTenantID := rs.Primary.Attributes["microtenant_id"]
+		service := apiClient.Service
+		if microTenantID != "" {
+			service = service.WithMicroTenant(microTenantID)
+		}
+
+		resp, _, err := policysetcontroller.GetByPolicyType(context.Background(), apiClient.Service, "TIMEOUT_POLICY")
 		if err != nil {
 			return fmt.Errorf("failed fetching resource TIMEOUT_POLICY. Recevied error: %s", err)
 		}
-		_, _, err = apiClient.policysetcontroller.GetPolicyRule(resp.ID, rs.Primary.ID)
+		_, _, err = policysetcontroller.GetPolicyRule(context.Background(), service, resp.ID, rs.Primary.ID)
 		if err != nil {
 			return fmt.Errorf("failed fetching resource %s. Recevied error: %s", resource, err)
 		}
@@ -124,10 +145,6 @@ data "%s" "%s" {
 func getPolicyTimeoutRuleHCL(rName, generatedName, desc string) string {
 	return fmt.Sprintf(`
 
-data "zpa_policy_type" "timeout_policy" {
-	policy_type = "TIMEOUT_POLICY"
-}
-
 resource "%s" "%s" {
 	name          		= "%s"
 	description   		= "%s"
@@ -135,9 +152,7 @@ resource "%s" "%s" {
 	reauth_idle_timeout = "600"
 	reauth_timeout      = "172800"
 	operator      		= "AND"
-	policy_set_id 		= data.zpa_policy_type.timeout_policy.id
 	conditions {
-		negated  = false
 		operator = "OR"
 		operands {
 		  object_type = "CLIENT_TYPE"

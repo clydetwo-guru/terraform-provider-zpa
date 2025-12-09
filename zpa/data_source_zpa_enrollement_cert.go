@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/enrollmentcert"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/enrollmentcert"
 )
 
 func dataSourceEnrollmentCert() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceEnrollmentCertRead,
+		ReadContext: dataSourceEnrollmentCertRead,
 		Schema: map[string]*schema.Schema{
 			"allow_signing": {
 				Type:     schema.TypeBool,
@@ -101,29 +103,39 @@ func dataSourceEnrollmentCert() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
 
-func dataSourceEnrollmentCertRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceEnrollmentCertRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
 	var resp *enrollmentcert.EnrollmentCert
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for signing certificate %s\n", id)
-		res, _, err := zClient.enrollmentcert.Get(id)
+		res, _, err := enrollmentcert.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if id == "" && ok && name != "" {
 		log.Printf("[INFO] Getting data for signing certificate name %s\n", name)
-		res, _, err := zClient.enrollmentcert.GetByName(name)
+		res, _, err := enrollmentcert.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -150,8 +162,9 @@ func dataSourceEnrollmentCertRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("valid_to_in_epoch_sec", resp.ValidToInEpochSec)
 		_ = d.Set("zrsa_encrypted_private_key", resp.ZrsaEncryptedPrivateKey)
 		_ = d.Set("zrsa_encrypted_session_key", resp.ZrsaEncryptedSessionKey)
+		_ = d.Set("microtenant_id", resp.MicrotenantID)
 	} else {
-		return fmt.Errorf("couldn't find any signing certificate with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any signing certificate with name '%s' or id '%s'", name, id))
 	}
 
 	return nil

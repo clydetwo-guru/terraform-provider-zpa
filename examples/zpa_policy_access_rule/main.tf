@@ -19,12 +19,10 @@ resource "zpa_policy_access_rule" "this" {
   name                          = "Example"
   description                   = "Example"
   action                        = "ALLOW"
-  rule_order                     = 2
   operator = "AND"
   policy_set_id = data.zpa_policy_type.access_policy.id
 
   conditions {
-    negated = false
     operator = "OR"
     operands {
       name =  "Example"
@@ -35,7 +33,6 @@ resource "zpa_policy_access_rule" "this" {
   }
 
   conditions {
-     negated = false
      operator = "OR"
     operands {
       object_type = "IDP"

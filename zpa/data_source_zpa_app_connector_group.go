@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/appconnectorgroup"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/appconnectorgroup"
 )
 
 func dataSourceAppConnectorGroup() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceConnectorGroupRead,
+		ReadContext: dataSourceConnectorGroupRead,
 		Schema: map[string]*schema.Schema{
 			"connectors": {
 				Type:     schema.TypeList,
@@ -270,6 +272,26 @@ func dataSourceAppConnectorGroup() *schema.Resource {
 				},
 			},
 			"lss_app_connector_group": {
+				Type:        schema.TypeBool,
+				Computed:    true,
+				Description: "Whether or not the App Connector Group is configured for the Log Streaming Service (LSS)",
+			},
+			"tcp_quick_ack_app": {
+				Description: "Whether TCP Quick Acknowledgement is enabled or disabled for the application. The tcpQuickAckApp, tcpQuickAckAssistant, and tcpQuickAckReadAssistant fields must all share the same value.",
+				Type:        schema.TypeBool,
+				Computed:    true,
+			},
+			"tcp_quick_ack_assistant": {
+				Description: "Whether TCP Quick Acknowledgement is enabled or disabled for the application. The tcpQuickAckApp, tcpQuickAckAssistant, and tcpQuickAckReadAssistant fields must all share the same value.",
+				Type:        schema.TypeBool,
+				Computed:    true,
+			},
+			"tcp_quick_ack_read_assistant": {
+				Description: "Whether TCP Quick Acknowledgement is enabled or disabled for the application. The tcpQuickAckApp, tcpQuickAckAssistant, and tcpQuickAckReadAssistant fields must all share the same value.",
+				Type:        schema.TypeBool,
+				Computed:    true,
+			},
+			"use_in_dr_mode": {
 				Type:     schema.TypeBool,
 				Computed: true,
 			},
@@ -293,29 +315,43 @@ func dataSourceAppConnectorGroup() *schema.Resource {
 				Type:     schema.TypeString,
 				Computed: true,
 			},
+			"microtenant_id": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
+			},
 		},
 	}
 }
 
-func dataSourceConnectorGroupRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceConnectorGroupRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
 	var resp *appconnectorgroup.AppConnectorGroup
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
 		log.Printf("[INFO] Getting data for app connector group  %s\n", id)
-		res, _, err := zClient.appconnectorgroup.Get(id)
+		res, _, err := appconnectorgroup.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
 		log.Printf("[INFO] Getting data for app connector group name %s\n", name)
-		res, _, err := zClient.appconnectorgroup.GetByName(name)
+		res, _, err := appconnectorgroup.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
@@ -336,17 +372,25 @@ func dataSourceConnectorGroupRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("name", resp.Name)
 		_ = d.Set("override_version_profile", resp.OverrideVersionProfile)
 		_ = d.Set("lss_app_connector_group", resp.LSSAppConnectorGroup)
+		_ = d.Set("tcp_quick_ack_app", resp.TCPQuickAckApp)
+		_ = d.Set("tcp_quick_ack_assistant", resp.TCPQuickAckAssistant)
+		_ = d.Set("tcp_quick_ack_read_assistant", resp.TCPQuickAckReadAssistant)
+		_ = d.Set("use_in_dr_mode", resp.UseInDrMode)
 		_ = d.Set("upgrade_day", resp.UpgradeDay)
 		_ = d.Set("upgrade_time_in_secs", resp.UpgradeTimeInSecs)
 		_ = d.Set("version_profile_id", resp.VersionProfileID)
 		_ = d.Set("version_profile_name", resp.VersionProfileName)
+		_ = d.Set("microtenant_id", resp.MicroTenantID)
+		_ = d.Set("microtenant_name", resp.MicroTenantName)
+
 		_ = d.Set("connectors", flattenConnectors(resp))
 
 		if err := d.Set("server_groups", flattenServerGroups(resp)); err != nil {
-			return fmt.Errorf("failed to read server groups %s", err)
+			return diag.FromErr(fmt.Errorf("failed to read app server groups %s", err))
 		}
+
 	} else {
-		return fmt.Errorf("couldn't find any app connector group with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any app connector group with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
@@ -354,44 +398,44 @@ func dataSourceConnectorGroupRead(d *schema.ResourceData, m interface{}) error {
 
 func flattenConnectors(appConnector *appconnectorgroup.AppConnectorGroup) []interface{} {
 	appConnectors := make([]interface{}, len(appConnector.Connectors))
-	for i, appConnector := range appConnector.Connectors {
+	for i, appConnectorItem := range appConnector.Connectors {
 		appConnectors[i] = map[string]interface{}{
-			"application_start_time":               appConnector.ApplicationStartTime,
-			"appconnector_group_id":                appConnector.AppConnectorGroupID,
-			"appconnector_group_name":              appConnector.AppConnectorGroupName,
-			"control_channel_status":               appConnector.ControlChannelStatus,
-			"creation_time":                        appConnector.CreationTime,
-			"ctrl_broker_name":                     appConnector.CtrlBrokerName,
-			"current_version":                      appConnector.CurrentVersion,
-			"description":                          appConnector.Description,
-			"enabled":                              appConnector.Enabled,
-			"expected_upgrade_time":                appConnector.ExpectedUpgradeTime,
-			"expected_version":                     appConnector.ExpectedVersion,
-			"fingerprint":                          appConnector.Fingerprint,
-			"id":                                   appConnector.ID,
-			"ipacl":                                appConnector.IPACL,
-			"issued_cert_id":                       appConnector.IssuedCertID,
-			"last_broker_connect_time":             appConnector.LastBrokerConnectTime,
-			"last_broker_connect_time_duration":    appConnector.LastBrokerConnectTimeDuration,
-			"last_broker_disconnect_time":          appConnector.LastBrokerDisconnectTime,
-			"last_broker_disconnect_time_duration": appConnector.LastBrokerDisconnectTimeDuration,
-			"last_upgrade_time":                    appConnector.LastUpgradeTime,
-			"latitude":                             appConnector.Latitude,
-			"location":                             appConnector.Location,
-			"longitude":                            appConnector.Longitude,
-			"modifiedby":                           appConnector.ModifiedBy,
-			"modified_time":                        appConnector.ModifiedTime,
-			"name":                                 appConnector.Name,
-			"provisioning_key_id":                  appConnector.ProvisioningKeyID,
-			"provisioning_key_name":                appConnector.ProvisioningKeyName,
-			"platform":                             appConnector.Platform,
-			"previous_version":                     appConnector.PreviousVersion,
-			"private_ip":                           appConnector.PrivateIP,
-			"public_ip":                            appConnector.PublicIP,
-			"sarge_version":                        appConnector.SargeVersion,
-			"enrollment_cert":                      appConnector.EnrollmentCert,
-			"upgrade_attempt":                      appConnector.UpgradeAttempt,
-			"upgrade_status":                       appConnector.UpgradeStatus,
+			"application_start_time":               appConnectorItem.ApplicationStartTime,
+			"appconnector_group_id":                appConnectorItem.AppConnectorGroupID,
+			"appconnector_group_name":              appConnectorItem.AppConnectorGroupName,
+			"control_channel_status":               appConnectorItem.ControlChannelStatus,
+			"creation_time":                        appConnectorItem.CreationTime,
+			"ctrl_broker_name":                     appConnectorItem.CtrlBrokerName,
+			"current_version":                      appConnectorItem.CurrentVersion,
+			"description":                          appConnectorItem.Description,
+			"enabled":                              appConnectorItem.Enabled,
+			"expected_upgrade_time":                appConnectorItem.ExpectedUpgradeTime,
+			"expected_version":                     appConnectorItem.ExpectedVersion,
+			"fingerprint":                          appConnectorItem.Fingerprint,
+			"id":                                   appConnectorItem.ID,
+			"ipacl":                                appConnectorItem.IPACL,
+			"issued_cert_id":                       appConnectorItem.IssuedCertID,
+			"last_broker_connect_time":             appConnectorItem.LastBrokerConnectTime,
+			"last_broker_connect_time_duration":    appConnectorItem.LastBrokerConnectTimeDuration,
+			"last_broker_disconnect_time":          appConnectorItem.LastBrokerDisconnectTime,
+			"last_broker_disconnect_time_duration": appConnectorItem.LastBrokerDisconnectTimeDuration,
+			"last_upgrade_time":                    appConnectorItem.LastUpgradeTime,
+			"latitude":                             appConnectorItem.Latitude,
+			"location":                             appConnectorItem.Location,
+			"longitude":                            appConnectorItem.Longitude,
+			"modifiedby":                           appConnectorItem.ModifiedBy,
+			"modified_time":                        appConnectorItem.ModifiedTime,
+			"name":                                 appConnectorItem.Name,
+			"provisioning_key_id":                  appConnectorItem.ProvisioningKeyID,
+			"provisioning_key_name":                appConnectorItem.ProvisioningKeyName,
+			"platform":                             appConnectorItem.Platform,
+			"previous_version":                     appConnectorItem.PreviousVersion,
+			"private_ip":                           appConnectorItem.PrivateIP,
+			"public_ip":                            appConnectorItem.PublicIP,
+			"sarge_version":                        appConnectorItem.SargeVersion,
+			"enrollment_cert":                      appConnectorItem.EnrollmentCert,
+			"upgrade_attempt":                      appConnectorItem.UpgradeAttempt,
+			"upgrade_status":                       appConnectorItem.UpgradeStatus,
 		}
 	}
 

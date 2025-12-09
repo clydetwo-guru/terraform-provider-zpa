@@ -1,16 +1,18 @@
 package zpa
 
 import (
+	"context"
 	"fmt"
 	"log"
 
+	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
-	"github.com/zscaler/terraform-provider-zpa/gozscaler/segmentgroup"
+	"github.com/zscaler/zscaler-sdk-go/v3/zscaler/zpa/services/segmentgroup"
 )
 
 func dataSourceSegmentGroup() *schema.Resource {
 	return &schema.Resource{
-		Read: dataSourceSegmentGroupRead,
+		ReadContext: dataSourceSegmentGroupRead,
 		Schema: map[string]*schema.Schema{
 			"applications": {
 				Type:     schema.TypeList,
@@ -190,41 +192,49 @@ func dataSourceSegmentGroup() *schema.Resource {
 				Type:     schema.TypeString,
 				Optional: true,
 			},
-			"policy_migrated": {
-				Type:     schema.TypeBool,
-				Optional: true,
-				Computed: true,
-			},
-			"tcp_keep_alive_enabled": {
+			"microtenant_id": {
 				Type:     schema.TypeString,
-				Computed: true,
+				Optional: true,
+			},
+			"microtenant_name": {
+				Type:     schema.TypeString,
+				Optional: true,
 			},
 		},
 	}
 }
 
-func dataSourceSegmentGroupRead(d *schema.ResourceData, m interface{}) error {
-	zClient := m.(*Client)
+func dataSourceSegmentGroupRead(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	zClient := meta.(*Client)
+	service := zClient.Service
+
+	// Handle MicroTenantID if set
+	microTenantID := GetString(d.Get("microtenant_id"))
+	if microTenantID != "" {
+		service = service.WithMicroTenant(microTenantID)
+	}
 
 	var resp *segmentgroup.SegmentGroup
 	id, ok := d.Get("id").(string)
 	if ok && id != "" {
-		log.Printf("[INFO] Getting data for server group %s\n", id)
-		res, _, err := zClient.segmentgroup.Get(id)
+		log.Printf("[INFO] Getting data for segment group %s\n", id)
+		res, _, err := segmentgroup.Get(ctx, service, id)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
+
 	name, ok := d.Get("name").(string)
 	if ok && name != "" {
-		log.Printf("[INFO] Getting data for server group name %s\n", name)
-		res, _, err := zClient.segmentgroup.GetByName(name)
+		log.Printf("[INFO] Getting data for segment group name %s\n", name)
+		res, _, err := segmentgroup.GetByName(ctx, service, name)
 		if err != nil {
-			return err
+			return diag.FromErr(err)
 		}
 		resp = res
 	}
+
 	if resp != nil {
 		d.SetId(resp.ID)
 		_ = d.Set("config_space", resp.ConfigSpace)
@@ -234,14 +244,14 @@ func dataSourceSegmentGroupRead(d *schema.ResourceData, m interface{}) error {
 		_ = d.Set("modified_by", resp.ModifiedBy)
 		_ = d.Set("modified_time", resp.ModifiedTime)
 		_ = d.Set("name", resp.Name)
-		_ = d.Set("policy_migrated", resp.PolicyMigrated)
-		_ = d.Set("tcp_keep_alive_enabled", resp.TcpKeepAliveEnabled)
+		_ = d.Set("microtenant_id", resp.MicroTenantID)
+		_ = d.Set("microtenant_name", resp.MicroTenantName)
 
 		if err := d.Set("applications", flattenSegmentGroupApplications(resp)); err != nil {
-			return fmt.Errorf("failed to read applications %s", err)
+			return diag.FromErr(fmt.Errorf("failed to read applications: %s", err))
 		}
 	} else {
-		return fmt.Errorf("couldn't find any segment group with name '%s' or id '%s'", name, id)
+		return diag.FromErr(fmt.Errorf("couldn't find any segment group with name '%s' or id '%s'", name, id))
 	}
 
 	return nil
